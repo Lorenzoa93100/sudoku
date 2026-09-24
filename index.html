@@ -1,0 +1,820 @@
+<!DOCTYPE html>
+<html lang="fr">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<title>Sudoku – avec aides expliquées</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Figtree:wght@400;500;600;700&family=Fraunces:opsz,wght@9..144,500;9..144,600&family=Kalam:wght@700&display=swap" rel="stylesheet">
+<style>
+:root{
+  --bg:#EEF1F5; --surface:#FFFFFF; --surface-2:#F6F8FB; --text:#16202E; --muted:#5E6B7D;
+  --line:#C9D1DC; --line-strong:#2B3646; --ink:#16202E; --pen:#2F5FD0; --wrong:#C8323F; --wrong-soft:#FBE3E5;
+  --peer:#E4EAF2; --same:#C9D8F5; --sel:#A9C1F2; --hl:#FFD55A; --hl-soft:#FFF1C2; --good:#1B8A5A; --good-soft:#D8F2E5;
+  --btn:#E2E7EE; --btn-text:#16202E; --shadow:0 1px 0 rgba(22,32,46,.06);
+  box-sizing:border-box; padding-top:env(safe-area-inset-top,0px); padding-bottom:env(safe-area-inset-bottom,0px);
+  font-family:"Figtree",system-ui,-apple-system,"Segoe UI",sans-serif; color:var(--text);
+}
+@media (prefers-color-scheme:dark){:root:not([data-theme="light"]){
+  --bg:#12161E; --surface:#1B212C; --surface-2:#222936; --text:#E7ECF4; --muted:#95A1B3;
+  --line:#343D4C; --line-strong:#8C98AB; --ink:#E7ECF4; --pen:#7FAEFF; --wrong:#FF6B78; --wrong-soft:#4A1E26;
+  --peer:#232B38; --same:#2F4166; --sel:#3C5A94; --hl:#E8B23A; --hl-soft:#4A3B17; --good:#4FD19B; --good-soft:#163A2B;
+  --btn:#262E3B; --btn-text:#E7ECF4; --shadow:none;
+}}
+:root[data-theme="dark"]{
+  --bg:#12161E; --surface:#1B212C; --surface-2:#222936; --text:#E7ECF4; --muted:#95A1B3;
+  --line:#343D4C; --line-strong:#8C98AB; --ink:#E7ECF4; --pen:#7FAEFF; --wrong:#FF6B78; --wrong-soft:#4A1E26;
+  --peer:#232B38; --same:#2F4166; --sel:#3C5A94; --hl:#E8B23A; --hl-soft:#4A3B17; --good:#4FD19B; --good-soft:#163A2B;
+  --btn:#262E3B; --btn-text:#E7ECF4; --shadow:none;
+}
+html{height:100%;scroll-padding-top:env(safe-area-inset-top,0px)}
+*{box-sizing:border-box}
+body{margin:0;min-height:100%;background:var(--bg);-webkit-tap-highlight-color:transparent}
+button{font:inherit;color:inherit;cursor:pointer}
+button:focus-visible,.cell:focus-visible{outline:3px solid var(--pen);outline-offset:2px}
+.app{max-width:520px;margin:0 auto;padding:12px 12px 24px}
+.top{display:flex;align-items:center;justify-content:space-between;gap:8px}
+.iconbtn{border:0;background:transparent;width:44px;height:44px;border-radius:12px;display:grid;place-items:center}
+.iconbtn:hover{background:var(--btn)}
+.iconbtn svg{width:24px;height:24px}
+.level{font-family:"Fraunces",Georgia,serif;font-weight:600;font-size:22px;margin:0}
+.timer{display:flex;align-items:center;gap:2px;font-variant-numeric:tabular-nums;color:var(--muted);font-size:16px}
+.meta{display:flex;justify-content:space-between;color:var(--muted);font-size:14px;margin:4px 4px 10px}
+.meta b{color:var(--text);font-weight:600}
+.meta .bad{color:var(--wrong)}
+.boardwrap{display:grid;grid-template-columns:auto 1fr;grid-template-rows:auto 1fr;gap:3px}
+.boardwrap.nocoords{grid-template-columns:1fr;grid-template-rows:1fr}
+.boardwrap.nocoords .colnums,.boardwrap.nocoords .rownums,.boardwrap.nocoords .corner{display:none}
+.colnums,.rownums{display:grid;color:var(--muted);font-size:11px;font-weight:600}
+.colnums{grid-template-columns:repeat(9,1fr);text-align:center;padding:0 2px}
+.rownums{grid-template-rows:repeat(9,1fr);align-items:center;padding:2px 0;width:14px;text-align:center}
+.board{position:relative;display:grid;grid-template-columns:repeat(9,1fr);aspect-ratio:1;border:2px solid var(--line-strong);border-radius:10px;overflow:hidden;background:var(--surface);box-shadow:var(--shadow);touch-action:manipulation;user-select:none}
+.cell{position:relative;border:0;padding:0;background:var(--surface);border-right:1px solid var(--line);border-bottom:1px solid var(--line);display:grid;place-items:center;min-width:0;min-height:0}
+.cell.c2,.cell.c5{border-right:2px solid var(--line-strong)}
+.cell.c8{border-right:0}
+.cell.r2,.cell.r5{border-bottom:2px solid var(--line-strong)}
+.cell.r8{border-bottom:0}
+.cell.peer{background:var(--peer)}
+.cell.same{background:var(--same)}
+.cell.sel{background:var(--sel)}
+.cell.zone{background:var(--hl-soft)}
+.cell.tech{background:var(--hl)}
+.cell.tech .val,.cell.tech .notes{color:#1D1606}
+.cell.elim{background:var(--wrong-soft)}
+.cell.target{background:var(--good-soft);box-shadow:inset 0 0 0 3px var(--good)}
+.cell.chain{box-shadow:inset 0 0 0 3px var(--hl)}
+.cell.errmark{box-shadow:inset 0 0 0 3px var(--wrong)}
+.val{font-size:clamp(20px,6.6vw,32px);line-height:1}
+.given .val{font-family:"Fraunces",Georgia,serif;font-weight:600;color:var(--ink)}
+.user .val{font-family:"Kalam","Figtree",cursive;font-weight:700;color:var(--pen);transform:translateY(2px)}
+.wrong .val{color:var(--wrong)}
+.notes{display:grid;grid-template-columns:repeat(3,1fr);grid-template-rows:repeat(3,1fr);width:100%;height:100%;padding:1px 2px;color:var(--muted);font-size:clamp(9px,2.4vw,12px);font-weight:600;line-height:1}
+.notes span{display:grid;place-items:center}
+.notes span.hot{color:var(--pen);font-weight:700}
+.notes span.cut{color:var(--wrong);text-decoration:line-through}
+.pause-cover{position:absolute;inset:0;background:var(--surface);display:none;place-items:center;text-align:center;gap:8px;z-index:2}
+.board.paused .pause-cover{display:grid}
+.pause-cover p{margin:0 0 12px;color:var(--muted)}
+.hint{margin-top:12px;background:var(--surface);border:2px solid var(--hl);border-radius:14px;padding:14px 16px;display:none}
+.hint.open{display:block}
+.hint h2{font-family:"Fraunces",Georgia,serif;font-weight:600;font-size:19px;margin:0 0 6px;display:flex;align-items:center;gap:8px}
+.hint h2 .dot{width:10px;height:10px;border-radius:50%;background:var(--hl);flex:none}
+.hint p{margin:6px 0;line-height:1.55;font-size:15px}
+.hint ol{margin:6px 0;padding-left:20px;line-height:1.55;font-size:15px}
+.hint .legend{display:flex;flex-wrap:wrap;gap:6px 14px;font-size:12.5px;color:var(--muted);margin:8px 0 4px}
+.hint .legend i{display:inline-block;width:12px;height:12px;border-radius:3px;vertical-align:-1px;margin-right:5px}
+.hint .actions{display:flex;flex-wrap:wrap;gap:8px;margin-top:10px}
+.pill{border:0;border-radius:999px;padding:10px 16px;background:var(--btn);color:var(--btn-text);font-weight:600;font-size:14px}
+.pill.primary{background:var(--pen);color:#fff}
+:root[data-theme="dark"] .pill.primary{color:#0E1522}
+@media (prefers-color-scheme:dark){:root:not([data-theme="light"]) .pill.primary{color:#0E1522}}
+.tools{display:grid;grid-template-columns:repeat(5,1fr);gap:4px;margin:14px 0 10px}
+.tool{border:0;background:transparent;border-radius:12px;padding:6px 2px;display:flex;flex-direction:column;align-items:center;gap:4px;font-size:12.5px;color:var(--muted);position:relative}
+.tool svg{width:26px;height:26px;color:var(--text)}
+.tool:hover{background:var(--btn)}
+.tool.on{color:var(--pen)}
+.tool.on svg{color:var(--pen)}
+.tool .badge{position:absolute;top:0;right:calc(50% - 26px);background:var(--muted);color:var(--surface);font-size:10.5px;font-weight:700;border-radius:999px;padding:1px 6px}
+.tool.on .badge{background:var(--pen)}
+.tool.hintbtn svg{color:#B98300}
+@media (prefers-color-scheme:dark){:root:not([data-theme="light"]) .tool.hintbtn svg{color:var(--hl)}}
+:root[data-theme="dark"] .tool.hintbtn svg{color:var(--hl)}
+.tool[hidden]{display:none}
+.pad{display:grid;grid-template-columns:repeat(9,1fr);gap:5px}
+.num{border:0;background:var(--btn);border-radius:12px;padding:8px 0 6px;display:flex;flex-direction:column;align-items:center;min-height:64px;justify-content:center}
+.num .d{font-family:"Fraunces",Georgia,serif;font-weight:600;font-size:clamp(22px,6.4vw,30px);line-height:1;color:var(--pen)}
+.num .left{font-size:11.5px;color:var(--muted);margin-top:3px}
+.num.done{opacity:.28}
+.num.hidden{visibility:hidden}
+.notesmode .num .d{font-family:"Figtree",sans-serif;font-size:clamp(17px,4.8vw,22px);color:var(--muted)}
+.foot{margin-top:18px;color:var(--muted);font-size:13px;text-align:center}
+.overlay{position:fixed;inset:0;background:rgba(10,14,22,.55);display:none;align-items:flex-end;justify-content:center;z-index:10;padding:12px;padding-bottom:calc(12px + env(safe-area-inset-bottom,0px));padding-top:calc(12px + env(safe-area-inset-top,0px))}
+.overlay.open{display:flex}
+@media (min-width:600px){.overlay{align-items:center}}
+.sheet{background:var(--surface);border-radius:18px;width:100%;max-width:480px;max-height:100%;overflow:auto;padding:18px 18px 16px}
+.sheet h2{font-family:"Fraunces",Georgia,serif;font-weight:600;font-size:22px;margin:0 0 4px}
+.sheet .sub{color:var(--muted);margin:0 0 14px;font-size:14px}
+.diffs{display:grid;gap:8px}
+.diff{border:0;text-align:left;background:var(--surface-2);border-radius:12px;padding:12px 14px;display:flex;justify-content:space-between;align-items:center;gap:10px}
+.diff b{font-weight:600;font-size:16px}
+.diff span{color:var(--muted);font-size:13px}
+.menu{display:grid;gap:6px}
+.menu button{border:0;background:var(--surface-2);border-radius:12px;padding:13px 14px;text-align:left;font-weight:600;font-size:15px}
+.row{display:flex;align-items:center;justify-content:space-between;gap:12px;padding:11px 2px;border-bottom:1px solid var(--line)}
+.row:last-of-type{border-bottom:0}
+.row .t{font-size:15px}
+.row .d2{color:var(--muted);font-size:12.5px;margin-top:2px}
+.switch{appearance:none;width:46px;height:28px;border-radius:999px;background:var(--line);position:relative;flex:none;cursor:pointer;transition:background .15s}
+.switch::after{content:"";position:absolute;top:3px;left:3px;width:22px;height:22px;border-radius:50%;background:#fff;transition:transform .15s}
+.switch:checked{background:var(--pen)}
+.switch:checked::after{transform:translateX(18px)}
+.seg{display:flex;background:var(--surface-2);border-radius:10px;padding:3px}
+.seg button{border:0;background:transparent;border-radius:8px;padding:6px 10px;font-size:13px;font-weight:600;color:var(--muted)}
+.seg button.on{background:var(--surface);color:var(--text);box-shadow:var(--shadow)}
+.stat{display:grid;grid-template-columns:1.3fr 1fr 1fr 1fr;gap:6px;font-size:14px;padding:8px 2px;border-bottom:1px solid var(--line);font-variant-numeric:tabular-nums}
+.stat.head{color:var(--muted);font-size:12.5px}
+.big{font-family:"Fraunces",Georgia,serif;font-size:40px;font-weight:600;margin:6px 0}
+.close{float:right;margin:-6px -6px 0 0}
+.loading{display:flex;align-items:center;gap:10px;color:var(--muted)}
+.spin{width:18px;height:18px;border:2.5px solid var(--line);border-top-color:var(--pen);border-radius:50%;animation:sp 0.8s linear infinite}
+@keyframes sp{to{transform:rotate(360deg)}}
+@media (prefers-reduced-motion:reduce){.spin{animation:none}.switch,.switch::after{transition:none}}
+.help h3{font-size:16px;margin:14px 0 4px}
+.help p{margin:4px 0;line-height:1.55;font-size:14.5px}
+</style>
+</head>
+<body>
+<div class="app" id="app">
+  <div class="top">
+    <button class="iconbtn" id="menuBtn" aria-label="Menu"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><path d="M4 7h16M4 12h16M4 17h16"/></svg></button>
+    <h1 class="level" id="levelName">Sudoku</h1>
+    <div class="timer"><span id="timer">00:00</span>
+      <button class="iconbtn" id="pauseBtn" aria-label="Pause"><svg id="pauseIco" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><path d="M9 6v12M15 6v12"/></svg></button>
+    </div>
+  </div>
+  <div class="meta">
+    <span>Erreurs : <b id="errors">0/3</b></span>
+    <span>Aides : <b id="hintsUsed">0</b></span>
+    <span>Remplies : <b id="filled">0/81</b></span>
+  </div>
+
+  <div class="boardwrap" id="boardwrap">
+    <div class="corner"></div>
+    <div class="colnums" id="colnums"></div>
+    <div class="rownums" id="rownums"></div>
+    <div class="board" id="board" role="grid" aria-label="Grille de sudoku">
+      <div class="pause-cover"><div><p>Partie en pause</p><button class="pill primary" id="resumeBtn">Reprendre</button></div></div>
+    </div>
+  </div>
+
+  <section class="hint" id="hint" aria-live="polite"></section>
+
+  <div class="tools">
+    <button class="tool" id="undoBtn"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M9 14 4 9l5-5"/><path d="M4 9h10.5a5.5 5.5 0 0 1 0 11H11"/></svg>Annuler</button>
+    <button class="tool" id="eraseBtn"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="m7 21-4-4 11-11 7 7-8 8z"/><path d="M11 21h10M9.5 9.5l7 7"/></svg>Effacer</button>
+    <button class="tool" id="notesBtn"><span class="badge" id="notesBadge">OFF</span><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M4 20h4L19 9l-4-4L4 16z"/><path d="m13.5 6.5 4 4"/></svg>Notes</button>
+    <button class="tool" id="autoBtn"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><rect x="4" y="4" width="16" height="16" rx="2"/><path d="M9 4v16M15 4v16M4 9h16M4 15h16"/></svg>Notes auto</button>
+    <button class="tool hintbtn" id="hintBtn"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M9 18h6M10 21h4"/><path d="M12 3a6 6 0 0 0-3.6 10.8c.6.5 1 1.2 1.1 2V16h5v-.2c.1-.8.5-1.5 1.1-2A6 6 0 0 0 12 3z"/></svg>Aide</button>
+  </div>
+
+  <div class="pad" id="pad"></div>
+  <p class="foot">Clavier : chiffres, flèches, Suppr, N pour les notes, H pour l'aide, Ctrl+Z pour annuler.</p>
+</div>
+
+<div class="overlay" id="overlay"><div class="sheet" id="sheet"></div></div>
+
+<script>
+"use strict";
+/* ---------- Constantes et outils ---------- */
+const R = i => (i / 9) | 0, C = i => i % 9, B = i => ((R(i) / 3) | 0) * 3 + ((C(i) / 3) | 0);
+const UNITS = [];
+for (let r = 0; r < 9; r++) UNITS.push([...Array(9)].map((_, c) => r * 9 + c));
+for (let c = 0; c < 9; c++) UNITS.push([...Array(9)].map((_, r) => r * 9 + c));
+for (let b = 0; b < 9; b++) { const br = ((b / 3) | 0) * 3, bc = (b % 3) * 3; const u = []; for (let k = 0; k < 9; k++) u.push((br + ((k / 3) | 0)) * 9 + bc + (k % 3)); UNITS.push(u); }
+const CELL_UNITS = [...Array(81)].map((_, i) => [R(i), 9 + C(i), 18 + B(i)]);
+const PEERS = [...Array(81)].map((_, i) => { const s = new Set(); CELL_UNITS[i].forEach(u => UNITS[u].forEach(j => { if (j !== i) s.add(j); })); return [...s]; });
+const ALL = 0x3FE;
+const bit = d => 1 << d;
+const pop = m => { let n = 0; while (m) { m &= m - 1; n++; } return n; };
+const digitsOf = m => { const a = []; for (let d = 1; d <= 9; d++) if (m & bit(d)) a.push(d); return a; };
+const shuffle = a => { for (let i = a.length - 1; i > 0; i--) { const j = (Math.random() * (i + 1)) | 0; [a[i], a[j]] = [a[j], a[i]]; } return a; };
+const BOX_NAMES = ["en haut à gauche", "en haut au milieu", "en haut à droite", "du milieu à gauche", "du centre", "du milieu à droite", "en bas à gauche", "en bas au milieu", "en bas à droite"];
+const unitName = u => u < 9 ? `la ligne ${u + 1}` : u < 18 ? `la colonne ${u - 8}` : `le bloc ${BOX_NAMES[u - 18]}`;
+const cellName = i => `L${R(i) + 1}C${C(i) + 1}`;
+
+/* ---------- Solveur par force brute (unicité, génération) ---------- */
+function solveCount(grid, limit, randomize, out) {
+  const a = grid.slice(); const rows = new Array(9).fill(0), cols = new Array(9).fill(0), boxes = new Array(9).fill(0);
+  for (let i = 0; i < 81; i++) if (a[i]) { const b = bit(a[i]); if ((rows[R(i)] | cols[C(i)] | boxes[B(i)]) & b) return 0; rows[R(i)] |= b; cols[C(i)] |= b; boxes[B(i)] |= b; }
+  let count = 0;
+  function rec() {
+    let best = -1, bm = 0, bc = 10;
+    for (let i = 0; i < 81; i++) if (!a[i]) {
+      const m = ~(rows[R(i)] | cols[C(i)] | boxes[B(i)]) & ALL; const c = pop(m);
+      if (c === 0) return false;
+      if (c < bc) { bc = c; best = i; bm = m; if (c === 1) break; }
+    }
+    if (best < 0) { count++; if (out && count === 1) out.push(...a); return count >= limit; }
+    const ds = digitsOf(bm); if (randomize) shuffle(ds);
+    const r = R(best), c = C(best), b = B(best);
+    for (const d of ds) {
+      const x = bit(d); a[best] = d; rows[r] |= x; cols[c] |= x; boxes[b] |= x;
+      if (rec()) return true;
+      a[best] = 0; rows[r] &= ~x; cols[c] &= ~x; boxes[b] &= ~x;
+    }
+    return false;
+  }
+  rec(); return count;
+}
+function fullGrid() { const out = []; solveCount(new Array(81).fill(0), 1, true, out); return out; }
+
+/* ---------- Moteur logique (aides + niveau de difficulté) ---------- */
+function makeState(values) {
+  const v = values.slice(), c = new Array(81).fill(0);
+  for (let i = 0; i < 81; i++) if (!v[i]) { let m = ALL; for (const p of PEERS[i]) if (v[p]) m &= ~bit(v[p]); c[i] = m; }
+  return { v, c };
+}
+const cloneState = s => ({ v: s.v.slice(), c: s.c.slice() });
+function place(s, i, d) { s.v[i] = d; s.c[i] = 0; const b = ~bit(d); for (const p of PEERS[i]) s.c[p] &= b; }
+function positions(s, u, d) { const out = []; for (const j of UNITS[u]) if (!s.v[j] && (s.c[j] & bit(d))) out.push(j); return out; }
+function unitHas(s, u, d) { for (const j of UNITS[u]) if (s.v[j] === d) return true; return false; }
+
+function findHiddenSingle(s, unitList) {
+  for (const u of unitList) for (let d = 1; d <= 9; d++) {
+    if (unitHas(s, u, d)) continue;
+    const p = positions(s, u, d);
+    if (p.length === 1) return { u, i: p[0], d };
+  }
+  return null;
+}
+function findNakedSingle(s) { for (let i = 0; i < 81; i++) if (!s.v[i] && pop(s.c[i]) === 1) return { i, d: digitsOf(s.c[i])[0] }; return null; }
+
+const TECH = {
+  hiddenBox: "Seule place dans le bloc", hiddenLine: "Seule place sur la ligne", nakedSingle: "Dernier chiffre possible",
+  pointing: "Chiffre coincé dans un bloc", claiming: "Chiffre coincé sur une ligne", nakedPair: "Paire de cases",
+  hiddenPair: "Paire cachée", nakedTriple: "Trio de cases", xwing: "X-Wing", forcing: "Raisonnement par l'absurde"
+};
+
+function stepHiddenSingle(s, boxesOnly) {
+  const list = boxesOnly ? [...Array(9)].map((_, k) => 18 + k) : [...Array(18).keys()];
+  const h = findHiddenSingle(s, list); if (!h) return null;
+  const { u, i, d } = h;
+  const isBox = u >= 18;
+  return {
+    kind: "place", level: 1, tech: isBox ? "hiddenBox" : "hiddenLine", i, d, zone: UNITS[u], cells: [i],
+    short: `Regarde ${unitName(u)}. Où peut aller le ${d} ?`,
+    text: [`Dans ${unitName(u)}, il manque un ${d}. Toutes les autres cases vides sont bloquées : elles voient déjà un ${d} sur leur ligne, leur colonne ou leur bloc (ou il est rayé de leurs possibilités).`,
+           `Il ne reste qu'une seule case : ${cellName(i)}. Le ${d} va là.`]
+  };
+}
+function stepNakedSingle(s) {
+  const n = findNakedSingle(s); if (!n) return null;
+  const { i, d } = n;
+  return {
+    kind: "place", level: 1, tech: "nakedSingle", i, d, zone: [i], cells: [i],
+    short: `Regarde la case ${cellName(i)} (surlignée). Quels chiffres peut-elle encore recevoir ?`,
+    text: [`La case ${cellName(i)} ne peut plus recevoir que le ${d} : tous les autres chiffres sont déjà dans sa ligne, sa colonne ou son bloc, ou ont été éliminés.`,
+           `Donc c'est un ${d}.`]
+  };
+}
+function stepPointing(s) {
+  for (let b = 18; b < 27; b++) for (let d = 1; d <= 9; d++) {
+    const p = positions(s, b, d); if (p.length < 2) continue;
+    for (const [kind, key, base] of [["row", R, 0], ["col", C, 9]]) {
+      if (p.every(j => key(j) === key(p[0]))) {
+        const line = base + key(p[0]);
+        const el = positions(s, line, d).filter(j => !p.includes(j));
+        if (el.length) return {
+          kind: "elim", level: 2, tech: "pointing", elims: el.map(j => [j, d]), zone: UNITS[b], cells: p,
+          short: `Regarde où peut aller le ${d} dans ${unitName(b)}.`,
+          text: [`Dans ${unitName(b)}, le ${d} ne peut aller que dans les cases surlignées, qui sont toutes sur ${unitName(line)}.`,
+                 `Donc le ${d} de ${unitName(line)} est forcément dans ce bloc. On peut l'enlever des autres cases de ${unitName(line)} (en rouge).`]
+        };
+      }
+    }
+  }
+  for (let u = 0; u < 18; u++) for (let d = 1; d <= 9; d++) {
+    const p = positions(s, u, d); if (p.length < 2) continue;
+    if (p.every(j => B(j) === B(p[0]))) {
+      const bx = 18 + B(p[0]);
+      const el = positions(s, bx, d).filter(j => !p.includes(j));
+      if (el.length) return {
+        kind: "elim", level: 2, tech: "claiming", elims: el.map(j => [j, d]), zone: UNITS[u], cells: p,
+        short: `Regarde où peut aller le ${d} sur ${unitName(u)}.`,
+        text: [`Sur ${unitName(u)}, le ${d} ne peut aller que dans les cases surlignées, qui sont toutes dans ${unitName(bx)}.`,
+               `Donc le ${d} de ce bloc est forcément sur ${unitName(u)}. On l'enlève des autres cases du bloc (en rouge).`]
+      };
+    }
+  }
+  return null;
+}
+function combos(arr, k) { const out = []; const rec = (st, acc) => { if (acc.length === k) { out.push(acc.slice()); return; } for (let x = st; x < arr.length; x++) { acc.push(arr[x]); rec(x + 1, acc); acc.pop(); } }; rec(0, []); return out; }
+function stepNakedSubset(s, k) {
+  for (let u = 0; u < 27; u++) {
+    const empt = UNITS[u].filter(j => !s.v[j] && pop(s.c[j]) <= k && pop(s.c[j]) >= 2);
+    if (empt.length < k) continue;
+    for (const t of combos(empt, k)) {
+      const m = t.reduce((a, j) => a | s.c[j], 0); if (pop(m) !== k) continue;
+      const el = []; for (const j of UNITS[u]) if (!s.v[j] && !t.includes(j) && (s.c[j] & m)) for (const d of digitsOf(s.c[j] & m)) el.push([j, d]);
+      if (el.length) {
+        const ds = digitsOf(m).join(k === 2 ? " et " : ", ");
+        return {
+          kind: "elim", level: k === 2 ? 3 : 4, tech: k === 2 ? "nakedPair" : "nakedTriple", elims: el, zone: UNITS[u], cells: t,
+          short: `Dans ${unitName(u)}, cherche ${k === 2 ? "deux cases qui ont exactement les deux mêmes" : "trois cases qui se partagent les trois mêmes"} chiffres possibles.`,
+          text: [`Dans ${unitName(u)}, les cases surlignées ne peuvent contenir que ${ds}.`,
+                 `${k === 2 ? "Ces deux cases vont forcément prendre ces deux chiffres" : "Ces trois cases vont forcément prendre ces trois chiffres"}, donc aucune autre case de ${unitName(u)} ne peut les avoir. On les enlève ailleurs (en rouge).`]
+        };
+      }
+    }
+  }
+  return null;
+}
+function stepHiddenPair(s) {
+  for (let u = 0; u < 27; u++) {
+    const pos = {}; for (let d = 1; d <= 9; d++) if (!unitHas(s, u, d)) pos[d] = positions(s, u, d);
+    const ds = Object.keys(pos).map(Number).filter(d => pos[d].length === 2);
+    for (const [a, b] of combos(ds, 2)) {
+      if (pos[a][0] !== pos[b][0] || pos[a][1] !== pos[b][1]) continue;
+      const keep = bit(a) | bit(b); const el = [];
+      for (const j of pos[a]) for (const d of digitsOf(s.c[j] & ~keep)) el.push([j, d]);
+      if (el.length) return {
+        kind: "elim", level: 3, tech: "hiddenPair", elims: el, zone: UNITS[u], cells: pos[a],
+        short: `Dans ${unitName(u)}, regarde où peuvent aller le ${a} et le ${b}.`,
+        text: [`Dans ${unitName(u)}, le ${a} et le ${b} ne peuvent aller que dans les deux mêmes cases (surlignées).`,
+               `Ces deux cases sont donc réservées au ${a} et au ${b} : on enlève tous leurs autres chiffres possibles.`]
+      };
+    }
+  }
+  return null;
+}
+function stepXWing(s) {
+  for (const [base, other, key, okey, lbl] of [[0, 9, R, C, "lignes"], [9, 0, C, R, "colonnes"]]) {
+    for (let d = 1; d <= 9; d++) {
+      const lines = [];
+      for (let L = 0; L < 9; L++) { const p = positions(s, base + L, d); if (p.length === 2 && !unitHas(s, base + L, d)) lines.push([L, p]); }
+      for (const [[L1, p1], [L2, p2]] of combos(lines, 2)) {
+        const k1 = p1.map(okey), k2 = p2.map(okey);
+        if (k1[0] !== k2[0] || k1[1] !== k2[1]) continue;
+        const el = [];
+        for (const k of k1) for (const j of positions(s, other + k, d)) if (key(j) !== L1 && key(j) !== L2) el.push([j, d]);
+        if (el.length) {
+          const olbl = lbl === "lignes" ? "colonnes" : "lignes";
+          return {
+            kind: "elim", level: 4, tech: "xwing", elims: el, zone: [...UNITS[base + L1], ...UNITS[base + L2]], cells: [...p1, ...p2],
+            short: `Regarde où peut aller le ${d} sur les ${lbl} ${L1 + 1} et ${L2 + 1}.`,
+            text: [`Sur les ${lbl} ${L1 + 1} et ${L2 + 1}, le ${d} n'a que 2 places chacune, et ce sont les mêmes ${olbl} (${k1[0] + 1} et ${k1[1] + 1}). Ça forme un rectangle.`,
+                   `Quoi qu'il arrive, les deux ${d} seront dans deux coins opposés du rectangle. Donc dans ces ${olbl}, le ${d} est déjà pris : on l'enlève des autres cases (en rouge).`]
+          };
+        }
+      }
+    }
+  }
+  return null;
+}
+function propagate(s0, i, d) {
+  const s = cloneState(s0); place(s, i, d); const chain = [];
+  for (let guard = 0; guard < 81; guard++) {
+    for (let j = 0; j < 81; j++) if (!s.v[j] && s.c[j] === 0) return { bad: `la case ${cellName(j)} n'a plus aucun chiffre possible`, chain, badCells: [j] };
+    for (let u = 0; u < 27; u++) for (let x = 1; x <= 9; x++) if (!unitHas(s, u, x) && positions(s, u, x).length === 0) return { bad: `le ${x} n'a plus aucune place dans ${unitName(u)}`, chain, badCells: UNITS[u] };
+    const n = findNakedSingle(s);
+    if (n) { chain.push({ i: n.i, d: n.d, why: `c'est son seul chiffre possible` }); place(s, n.i, n.d); continue; }
+    const h = findHiddenSingle(s, [...Array(27).keys()]);
+    if (h) { chain.push({ i: h.i, d: h.d, why: `c'est la seule place du ${h.d} dans ${unitName(h.u)}` }); place(s, h.i, h.d); continue; }
+    return null;
+  }
+  return null;
+}
+function stepForcing(s) {
+  const tests = [];
+  for (let i = 0; i < 81; i++) if (!s.v[i] && pop(s.c[i]) === 2) for (const d of digitsOf(s.c[i])) tests.push({ i, d });
+  for (let u = 0; u < 27; u++) for (let d = 1; d <= 9; d++) { if (unitHas(s, u, d)) continue; const p = positions(s, u, d); if (p.length === 2) for (const i of p) tests.push({ i, d }); }
+  let best = null;
+  for (const t of tests) {
+    const r = propagate(s, t.i, t.d);
+    if (r && (!best || r.chain.length < best.r.chain.length)) { best = { t, r }; if (r.chain.length <= 2) break; }
+  }
+  if (!best) return null;
+  const { t, r } = best; const shown = r.chain.slice(0, 7);
+  const lines = shown.map(x => `alors ${cellName(x.i)} = ${x.d} (${x.why})`);
+  if (r.chain.length > shown.length) lines.push(`… et ${r.chain.length - shown.length} autre(s) case(s) en cascade`);
+  return {
+    kind: "elim", level: 5, tech: "forcing", elims: [[t.i, t.d]], zone: [t.i], cells: [t.i], chain: r.chain.map(x => x.i), bad: r.badCells,
+    short: `Aucune technique simple ici. Teste une hypothèse : et si la case ${cellName(t.i)} était un ${t.d} ?`,
+    text: [`On fait semblant de mettre un ${t.d} en ${cellName(t.i)} et on suit les conséquences comme des dominos :`],
+    list: lines,
+    after: `Blocage : ${r.bad}. C'est impossible, donc ${cellName(t.i)} n'est pas un ${t.d}.`
+  };
+}
+function nextStep(s) {
+  return stepHiddenSingle(s, true) || stepHiddenSingle(s, false) || stepNakedSingle(s) || stepPointing(s) ||
+    stepNakedSubset(s, 2) || stepHiddenPair(s) || stepNakedSubset(s, 3) || stepXWing(s) || stepForcing(s);
+}
+function applyStep(s, st) { if (st.kind === "place") place(s, st.i, st.d); else for (const [j, d] of st.elims) s.c[j] &= ~bit(d); }
+function grade(puzzle) {
+  const s = makeState(puzzle); let max = 0;
+  for (let guard = 0; guard < 400; guard++) {
+    if (s.v.every(x => x)) return max;
+    const st = nextStep(s); if (!st) return 99;
+    max = Math.max(max, st.level); applyStep(s, st);
+  }
+  return 99;
+}
+
+/* ---------- Génération par difficulté ---------- */
+const DIFFS = {
+  facile:    { name: "Facile",    min: 38, ok: l => l <= 1, want: 1, desc: "Beaucoup d'indices, techniques de base" },
+  moyen:     { name: "Moyen",     min: 30, ok: l => l <= 1, want: 1, desc: "Moins d'indices, il faut bien balayer" },
+  difficile: { name: "Difficile", min: 26, ok: l => l === 2, want: 2, desc: "Il faut repérer les chiffres coincés" },
+  expert:    { name: "Expert",    min: 22, ok: l => l === 3 || l === 4, want: 3.5, desc: "Paires, trios ou X-Wing nécessaires" },
+  extreme:   { name: "Extrême",   min: 17, ok: l => l >= 5, want: 5, desc: "Raisonnement par l'absurde obligatoire" }
+};
+function carve(sol, min) {
+  const p = sol.slice(); let givens = 81;
+  const order = shuffle([...Array(41).keys()]);
+  for (const i of order) {
+    if (givens <= min) break;
+    const j = 80 - i; const a = p[i], b = p[j];
+    p[i] = 0; p[j] = 0;
+    if (solveCount(p, 2) !== 1) { p[i] = a; p[j] = b; } else givens -= (i === j ? 1 : 2);
+  }
+  return p;
+}
+async function generate(key) {
+  const cfg = DIFFS[key]; const t0 = performance.now(); const budget = key === "extreme" || key === "expert" ? 9000 : 3000;
+  let best = null;
+  while (performance.now() - t0 < budget) {
+    const sol = fullGrid(); const p = carve(sol, cfg.min); const lvl = grade(p);
+    if (cfg.ok(lvl) && lvl !== 99) return { puzzle: p, solution: sol, level: lvl };
+    const score = Math.abs((lvl === 99 ? 6 : lvl) - cfg.want) + (lvl === 99 ? 0.5 : 0);
+    if (!best || score < best.score) best = { puzzle: p, solution: sol, level: lvl, score };
+    await new Promise(r => setTimeout(r, 0));
+  }
+  return best;
+}
+
+/* ---------- Réglages, stockage ---------- */
+const store = {
+  get(k, def) { try { const v = localStorage.getItem(k); return v ? JSON.parse(v) : def; } catch (e) { return def; } },
+  set(k, v) { try { localStorage.setItem(k, JSON.stringify(v)); } catch (e) {} }
+};
+const DEFAULT_SETTINGS = { errorLimit: true, autoCheck: true, autoRemoveNotes: true, hlPeers: true, hlSame: true, hideDone: true, showTimer: true, coords: true, noPencil: false, theme: "auto" };
+let settings = Object.assign({}, DEFAULT_SETTINGS, store.get("sdk-settings", {}));
+let stats = store.get("sdk-stats", {});
+
+/* ---------- État de la partie ---------- */
+let G = null; // { key, puzzle, solution, values, notes, errors, hints, time, done, lost }
+let selected = 40, noteMode = false, paused = false, history = [], hint = null, hintLevel = 0;
+
+const boardEl = document.getElementById("board");
+const cells = [];
+(function buildBoard() {
+  for (let i = 0; i < 81; i++) {
+    const b = document.createElement("button");
+    b.className = `cell r${R(i)} c${C(i)}`; b.setAttribute("role", "gridcell"); b.tabIndex = -1;
+    b.addEventListener("click", () => { selected = i; render(); b.focus({ preventScroll: true }); });
+    boardEl.appendChild(b); cells.push(b);
+  }
+  document.getElementById("colnums").innerHTML = [...Array(9)].map((_, k) => `<span>C${k + 1}</span>`).join("");
+  document.getElementById("rownums").innerHTML = [...Array(9)].map((_, k) => `<span>L${k + 1}</span>`).join("");
+  const pad = document.getElementById("pad");
+  for (let d = 1; d <= 9; d++) {
+    const b = document.createElement("button"); b.className = "num"; b.dataset.d = d;
+    b.innerHTML = `<span class="d">${d}</span><span class="left"></span>`; b.setAttribute("aria-label", `Chiffre ${d}`);
+    b.addEventListener("click", () => input(d)); pad.appendChild(b);
+  }
+})();
+
+function save() { if (G) store.set("sdk-game", G); }
+function snapshot() { history.push({ values: G.values.slice(), notes: G.notes.slice(), errors: G.errors }); if (history.length > 300) history.shift(); }
+
+function input(d) {
+  if (!G || G.done || G.lost || paused) return;
+  const i = selected; if (G.puzzle[i]) return;
+  clearHint();
+  if (noteMode && !settings.noPencil) {
+    if (G.values[i]) return;
+    snapshot(); G.notes[i] ^= bit(d);
+  } else {
+    if (G.values[i] === d) return;
+    snapshot();
+    G.values[i] = d; G.notes[i] = 0;
+    const wrong = d !== G.solution[i];
+    if (wrong && settings.autoCheck) { G.errors++; }
+    if (settings.autoRemoveNotes && !(wrong && settings.autoCheck)) for (const p of PEERS[i]) G.notes[p] &= ~bit(d);
+    if (settings.autoCheck && settings.errorLimit && G.errors >= 3) { G.lost = true; save(); render(); showLost(); return; }
+    checkWin();
+  }
+  save(); render();
+}
+function erase() {
+  if (!G || G.done || paused) return; const i = selected; if (G.puzzle[i]) return;
+  if (!G.values[i] && !G.notes[i]) return;
+  clearHint(); snapshot(); G.values[i] = 0; G.notes[i] = 0; save(); render();
+}
+function undo() {
+  if (!G || paused || !history.length) return;
+  const h = history.pop(); G.values = h.values; G.notes = h.notes; if (G.lost) { G.lost = false; } clearHint(); save(); render();
+}
+function autoNotes() {
+  if (!G || G.done || paused || settings.noPencil) return;
+  clearHint(); snapshot();
+  const s = makeState(G.values);
+  for (let i = 0; i < 81; i++) G.notes[i] = G.values[i] ? 0 : s.c[i];
+  save(); render();
+}
+function checkWin() {
+  for (let i = 0; i < 81; i++) if (G.values[i] !== G.solution[i]) return;
+  G.done = true; save();
+  const st = stats[G.key] || { played: 0, won: 0, best: null };
+  st.won++; if (st.best == null || G.time < st.best) st.best = G.time; stats[G.key] = st; store.set("sdk-stats", stats);
+  setTimeout(showWin, 250);
+}
+
+/* ---------- Aides ---------- */
+function clearHint() { hint = null; hintLevel = 0; document.getElementById("hint").classList.remove("open"); }
+function computeHint() {
+  const wrong = []; for (let i = 0; i < 81; i++) if (G.values[i] && G.values[i] !== G.solution[i]) wrong.push(i);
+  if (wrong.length) return { type: "error", cells: wrong };
+  const s = makeState(G.values); const pre = [];
+  for (let k = 0; k < 80; k++) {
+    const st = nextStep(s); if (!st) break;
+    if (st.kind === "place") return { type: "logic", pre, final: st };
+    applyStep(s, st); pre.push(st);
+  }
+  let bi = -1, bc = 10; for (let i = 0; i < 81; i++) if (!G.values[i] && pop(s.c[i]) < bc) { bc = pop(s.c[i]); bi = i; }
+  return { type: "reveal", i: bi, d: G.solution[bi] };
+}
+function askHint() {
+  if (!G || G.done || G.lost || paused) return;
+  if (hint && hintLevel < 2 && hint.type === "logic") { hintLevel++; renderHint(); render(); return; }
+  hint = computeHint(); hintLevel = 1; G.hints++; save(); renderHint(); render();
+  document.getElementById("hint").scrollIntoView({ block: "nearest", behavior: "smooth" });
+}
+function hintHighlights() {
+  const hl = { zone: new Set(), tech: new Set(), elim: new Map(), target: -1, chain: new Set(), err: new Set() };
+  if (!hint) return hl;
+  if (hint.type === "error") { hint.cells.forEach(i => hl.err.add(i)); return hl; }
+  if (hint.type === "reveal") { hl.target = hint.i; return hl; }
+  const first = hint.pre[0] || hint.final;
+  if (hintLevel === 1) { first.zone.forEach(i => hl.zone.add(i)); if (first.tech === "nakedSingle" || first.tech === "forcing") first.cells.forEach(i => hl.tech.add(i)); return hl; }
+  const steps = [...hint.pre, hint.final];
+  for (const st of steps) {
+    if (st.kind === "elim") { st.zone.forEach(i => hl.zone.add(i)); st.cells.forEach(i => hl.tech.add(i)); st.elims.forEach(([j, d]) => { if (!hl.elim.has(j)) hl.elim.set(j, new Set()); hl.elim.get(j).add(d); }); if (st.chain) st.chain.forEach(i => hl.chain.add(i)); }
+  }
+  if (!hint.pre.length) hint.final.zone.forEach(i => hl.zone.add(i));
+  hl.target = hint.final.i;
+  return hl;
+}
+function esc(t) { return String(t).replace(/[&<>]/g, c => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;" }[c])); }
+function renderHint() {
+  const el = document.getElementById("hint");
+  if (!hint) { el.classList.remove("open"); return; }
+  let h = "";
+  if (hint.type === "error") {
+    h = `<h2><span class="dot"></span>Il y a une erreur</h2><p>${hint.cells.length > 1 ? "Les cases entourées en rouge ne sont pas bonnes." : `La case ${cellName(hint.cells[0])}, entourée en rouge, n'est pas bonne.`} Tant qu'elle${hint.cells.length > 1 ? "s restent" : " reste"} là, tout ce que tu déduis ensuite risque d'être faux.</p>
+      <div class="actions"><button class="pill primary" data-act="fixerr">Effacer ${hint.cells.length > 1 ? "les erreurs" : "l'erreur"}</button><button class="pill" data-act="close">Fermer</button></div>`;
+  } else if (hint.type === "reveal") {
+    h = `<h2><span class="dot"></span>Pas de méthode simple</h2><p>Ici, même le raisonnement par l'absurde ne donne rien de court. Je te propose de révéler une case pour débloquer la suite.</p>
+      <div class="actions"><button class="pill primary" data-act="apply">Révéler ${cellName(hint.i)}</button><button class="pill" data-act="close">Fermer</button></div>`;
+  } else {
+    const first = hint.pre[0] || hint.final;
+    if (hintLevel === 1) {
+      h = `<h2><span class="dot"></span>${TECH[first.tech]}</h2><p>${esc(first.short)}</p>
+        <p style="color:var(--muted);font-size:13.5px">La zone à regarder est surlignée en jaune.</p>
+        <div class="actions"><button class="pill primary" data-act="more">Explique-moi</button><button class="pill" data-act="close">Je cherche seul</button></div>`;
+    } else {
+      const steps = [...hint.pre, hint.final];
+      const skip = Math.max(0, steps.length - 4);
+      const shown = steps.slice(skip);
+      h = `<h2><span class="dot"></span>${TECH[shown.length > 1 ? shown[shown.length - 2].tech : first.tech]}</h2>`;
+      if (skip) h += `<p style="color:var(--muted);font-size:13.5px">(${skip} étape(s) de nettoyage avant, non détaillées)</p>`;
+      shown.forEach((st, k) => {
+        if (shown.length > 1) h += `<p><b>${st.kind === "place" ? "Résultat" : `Étape ${k + 1}`} :</b></p>`;
+        h += st.text.map(t => `<p>${esc(t)}</p>`).join("");
+        if (st.list) h += `<ol>${st.list.map(t => `<li>${esc(t)}</li>`).join("")}</ol>`;
+        if (st.after) h += `<p>${esc(st.after)}</p>`;
+      });
+      if (hint.pre.length) h += `<p><b>Donc :</b> ${cellName(hint.final.i)} = ${hint.final.d}.</p>`;
+      h += `<div class="legend"><span><i style="background:var(--hl)"></i>cases qui comptent</span><span><i style="background:var(--hl-soft)"></i>zone</span>${hint.pre.length ? `<span><i style="background:var(--wrong-soft)"></i>chiffre qu'on élimine</span>` : ""}<span><i style="background:var(--good-soft);box-shadow:inset 0 0 0 2px var(--good)"></i>case à remplir</span></div>`;
+      h += `<div class="actions"><button class="pill primary" data-act="apply">Placer le ${hint.final.d}</button><button class="pill" data-act="close">Je le place moi-même</button></div>`;
+    }
+  }
+  el.innerHTML = h; el.classList.add("open");
+}
+document.getElementById("hint").addEventListener("click", e => {
+  const a = e.target.closest("[data-act]"); if (!a) return;
+  const act = a.dataset.act;
+  if (act === "close") { clearHint(); render(); }
+  else if (act === "more") { hintLevel = 2; renderHint(); render(); }
+  else if (act === "fixerr") { snapshot(); hint.cells.forEach(i => { G.values[i] = 0; }); clearHint(); save(); render(); }
+  else if (act === "apply") {
+    const i = hint.type === "reveal" ? hint.i : hint.final.i, d = hint.type === "reveal" ? hint.d : hint.final.d;
+    selected = i; clearHint(); const wasNote = noteMode; noteMode = false; input(d); noteMode = wasNote; render();
+  }
+});
+
+/* ---------- Affichage ---------- */
+function fmt(t) { const m = Math.floor(t / 60), s = t % 60; const h = Math.floor(m / 60); return (h ? h + ":" + String(m % 60).padStart(2, "0") : String(m).padStart(2, "0")) + ":" + String(s).padStart(2, "0"); }
+function render() {
+  if (!G) return;
+  const hl = hintHighlights();
+  const selVal = G.values[selected];
+  const counts = new Array(10).fill(0);
+  for (let i = 0; i < 81; i++) if (G.values[i] && (G.values[i] === G.solution[i] || !settings.autoCheck)) counts[G.values[i]]++;
+  let filled = 0;
+  for (let i = 0; i < 81; i++) {
+    const el = cells[i], v = G.values[i], given = !!G.puzzle[i];
+    if (v) filled++;
+    const cls = [`cell`, `r${R(i)}`, `c${C(i)}`, given ? "given" : v ? "user" : "empty"];
+    const isPeer = R(i) === R(selected) || C(i) === C(selected) || B(i) === B(selected);
+    if (settings.hlPeers && isPeer && i !== selected) cls.push("peer");
+    if (settings.hlSame && selVal && v === selVal && i !== selected) cls.push("same");
+    if (i === selected) cls.push("sel");
+    if (v && !given && v !== G.solution[i] && settings.autoCheck) cls.push("wrong");
+    if (hl.zone.has(i)) cls.push("zone");
+    if (hl.tech.has(i)) cls.push("tech");
+    if (hl.elim.has(i)) cls.push("elim");
+    if (hl.chain.has(i) && !hl.tech.has(i)) cls.push("chain");
+    if (hl.err.has(i)) cls.push("errmark");
+    if (i === hl.target) cls.push("target");
+    el.className = cls.join(" ");
+    let aria = `${cellName(i)}, `;
+    if (v) { el.innerHTML = `<span class="val">${v}</span>`; aria += `${v}`; }
+    else {
+      const showNotes = !settings.noPencil;
+      const m = showNotes ? G.notes[i] : 0; const cut = hl.elim.get(i);
+      if (m || cut) {
+        let h = `<span class="notes">`;
+        for (let d = 1; d <= 9; d++) {
+          const has = m & bit(d), isCut = cut && cut.has(d);
+          h += `<span class="${isCut ? "cut" : (has && selVal === d && settings.hlSame ? "hot" : "")}">${has || isCut ? d : ""}</span>`;
+        }
+        el.innerHTML = h + `</span>`; aria += `notes ${digitsOf(m).join(" ")}`;
+      } else { el.innerHTML = ""; aria += "vide"; }
+    }
+    el.setAttribute("aria-label", aria);
+    el.tabIndex = i === selected ? 0 : -1;
+  }
+  document.querySelectorAll(".num").forEach(b => {
+    const d = +b.dataset.d, left = 9 - counts[d];
+    b.querySelector(".left").textContent = left;
+    b.classList.toggle("done", left <= 0 && !settings.hideDone);
+    b.classList.toggle("hidden", left <= 0 && settings.hideDone);
+  });
+  document.getElementById("pad").classList.toggle("notesmode", noteMode && !settings.noPencil);
+  document.getElementById("errors").textContent = settings.autoCheck ? (settings.errorLimit ? `${G.errors}/3` : `${G.errors}`) : "—";
+  document.getElementById("errors").classList.toggle("bad", G.errors > 0 && settings.autoCheck);
+  document.getElementById("hintsUsed").textContent = G.hints;
+  document.getElementById("filled").textContent = `${filled}/81`;
+  document.getElementById("levelName").textContent = DIFFS[G.key].name;
+  document.getElementById("timer").textContent = settings.showTimer ? fmt(G.time) : "";
+  document.getElementById("notesBtn").classList.toggle("on", noteMode);
+  document.getElementById("notesBadge").textContent = noteMode ? "ON" : "OFF";
+  document.getElementById("notesBtn").hidden = settings.noPencil;
+  document.getElementById("autoBtn").hidden = settings.noPencil;
+  document.querySelector(".tools").style.gridTemplateColumns = `repeat(${settings.noPencil ? 3 : 5},1fr)`;
+  document.getElementById("boardwrap").classList.toggle("nocoords", !settings.coords);
+  boardEl.classList.toggle("paused", paused);
+  document.getElementById("pauseIco").innerHTML = paused ? `<path d="M8 5v14l11-7z"/>` : `<path d="M9 6v12M15 6v12"/>`;
+}
+
+/* ---------- Minuteur ---------- */
+setInterval(() => {
+  if (!G || G.done || G.lost || paused || document.hidden || overlayOpen()) return;
+  G.time++; if (settings.showTimer) document.getElementById("timer").textContent = fmt(G.time);
+  if (G.time % 5 === 0) save();
+}, 1000);
+function setPaused(p) { paused = p; render(); }
+document.getElementById("pauseBtn").addEventListener("click", () => setPaused(!paused));
+document.getElementById("resumeBtn").addEventListener("click", () => setPaused(false));
+
+/* ---------- Fenêtres ---------- */
+const overlay = document.getElementById("overlay"), sheet = document.getElementById("sheet");
+function overlayOpen() { return overlay.classList.contains("open"); }
+function openSheet(html, dismissable = true) { sheet.innerHTML = html; overlay.classList.add("open"); overlay.dataset.dismiss = dismissable ? "1" : ""; }
+function closeSheet() { overlay.classList.remove("open"); }
+overlay.addEventListener("click", e => { if (e.target === overlay && overlay.dataset.dismiss) closeSheet(); });
+const X = `<button class="iconbtn close" data-act="closeSheet" aria-label="Fermer"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><path d="M6 6l12 12M18 6 6 18"/></svg></button>`;
+
+function showNewGame(dismissable = true) {
+  openSheet(`${dismissable ? X : ""}<h2>Nouvelle partie</h2><p class="sub">Choisis la difficulté.</p><div class="diffs">
+    ${Object.entries(DIFFS).map(([k, d]) => `<button class="diff" data-new="${k}"><div><b>${d.name}</b><br><span>${d.desc}</span></div></button>`).join("")}</div>`, dismissable);
+}
+function showMenu() {
+  openSheet(`${X}<h2>Menu</h2><p class="sub">${G ? DIFFS[G.key].name + " · " + fmt(G.time) : ""}</p><div class="menu">
+    <button data-act="new">Nouvelle partie</button>
+    <button data-act="restart">Recommencer cette grille</button>
+    <button data-act="check">Vérifier ma grille</button>
+    <button data-act="settings">Réglages</button>
+    <button data-act="stats">Statistiques</button>
+    <button data-act="help">Comment marchent les aides</button></div>`);
+}
+function toggleRow(key, title, desc) { return `<label class="row"><div><div class="t">${title}</div>${desc ? `<div class="d2">${desc}</div>` : ""}</div><input type="checkbox" class="switch" data-set="${key}" ${settings[key] ? "checked" : ""}></label>`; }
+function showSettings() {
+  openSheet(`${X}<h2>Réglages</h2><p class="sub">Enregistrés sur cet appareil.</p>
+    <div class="row"><div class="t">Thème</div><div class="seg">${[["auto", "Auto"], ["light", "Clair"], ["dark", "Sombre"]].map(([k, l]) => `<button data-theme-set="${k}" class="${settings.theme === k ? "on" : ""}">${l}</button>`).join("")}</div></div>
+    ${toggleRow("noPencil", "Mode sans crayon", "Cache les notes pour t'entraîner à tout voir de tête")}
+    ${toggleRow("autoCheck", "Signaler les erreurs", "Un mauvais chiffre s'affiche en rouge")}
+    ${toggleRow("errorLimit", "Limite de 3 erreurs", "La partie s'arrête à la 3ᵉ erreur")}
+    ${toggleRow("autoRemoveNotes", "Nettoyer les notes", "Placer un chiffre l'efface des notes voisines")}
+    ${toggleRow("hlPeers", "Surligner ligne, colonne et bloc", "")}
+    ${toggleRow("hlSame", "Surligner les chiffres identiques", "")}
+    ${toggleRow("hideDone", "Masquer les chiffres terminés", "")}
+    ${toggleRow("coords", "Numéros de lignes et colonnes", "Utile pour suivre les explications des aides")}
+    ${toggleRow("showTimer", "Afficher le chrono", "")}`);
+}
+function showStats() {
+  const rows = Object.entries(DIFFS).map(([k, d]) => { const s = stats[k] || { played: 0, won: 0, best: null }; return `<div class="stat"><span>${d.name}</span><span>${s.played}</span><span>${s.won}</span><span>${s.best != null ? fmt(s.best) : "—"}</span></div>`; }).join("");
+  openSheet(`${X}<h2>Statistiques</h2><p class="sub">Sur cet appareil.</p><div class="stat head"><span>Niveau</span><span>Jouées</span><span>Gagnées</span><span>Record</span></div>${rows}`);
+}
+function showHelp() {
+  openSheet(`${X}<h2>Les aides</h2><div class="help">
+    <p>Le bouton Aide marche en deux temps. D'abord il te montre la zone à regarder et la technique, pour que tu cherches toi-même. Ensuite, si tu veux, il t'explique pas à pas et place le chiffre.</p>
+    <p>Les cases sont nommées avec L pour ligne et C pour colonne : L3C5 = 3ᵉ ligne, 5ᵉ colonne.</p>
+    <h3>Seule place possible</h3><p>Dans un bloc, une ligne ou une colonne, un chiffre n'a plus qu'une case où aller.</p>
+    <h3>Dernier chiffre possible</h3><p>Une case voit déjà 8 chiffres différents autour d'elle : il ne reste que le 9ᵉ.</p>
+    <h3>Chiffre coincé</h3><p>Dans un bloc, un chiffre ne peut aller que sur une seule ligne. On peut donc l'enlever du reste de cette ligne.</p>
+    <h3>Paires et trios</h3><p>Deux cases qui ne peuvent contenir que les deux mêmes chiffres se les « réservent ». Les autres cases de la zone ne peuvent pas les avoir.</p>
+    <h3>X-Wing</h3><p>Un chiffre a 2 places sur deux lignes, alignées en rectangle. Il est forcément dans deux coins opposés, ce qui l'élimine ailleurs dans ces colonnes.</p>
+    <h3>Raisonnement par l'absurde</h3><p>On teste un chiffre et on suit les dominos. Si on tombe sur une impossibilité, le test était faux.</p>
+  </div>`);
+}
+function showWin() {
+  const st = stats[G.key] || {};
+  openSheet(`<h2>Grille terminée</h2><p class="sub">${DIFFS[G.key].name}</p><div class="big">${fmt(G.time)}</div>
+    <p>${G.errors} erreur(s), ${G.hints} aide(s)${st.best === G.time ? ". Nouveau record !" : "."}</p>
+    <div class="actions" style="display:flex;gap:8px;margin-top:14px"><button class="pill primary" data-act="new">Nouvelle partie</button></div>`, false);
+}
+function showLost() {
+  openSheet(`<h2>3 erreurs</h2><p class="sub">La partie est terminée.</p>
+    <div class="menu"><button data-act="second">Annuler la dernière erreur et continuer</button><button data-act="restart">Recommencer cette grille</button><button data-act="new">Nouvelle partie</button></div>`, false);
+}
+sheet.addEventListener("click", e => {
+  const n = e.target.closest("[data-new]"); if (n) { startNew(n.dataset.new); return; }
+  const t = e.target.closest("[data-theme-set]"); if (t) { settings.theme = t.dataset.themeSet; store.set("sdk-settings", settings); applyTheme(); showSettings(); return; }
+  const a = e.target.closest("[data-act]"); if (!a) return;
+  const act = a.dataset.act;
+  if (act === "closeSheet") closeSheet();
+  else if (act === "new") showNewGame(!!G && !G.done && !G.lost);
+  else if (act === "restart") { G.values = G.puzzle.slice(); G.notes = new Array(81).fill(0); G.errors = 0; G.time = 0; G.done = false; G.lost = false; history = []; clearHint(); save(); closeSheet(); render(); }
+  else if (act === "check") { const w = []; for (let i = 0; i < 81; i++) if (G.values[i] && G.values[i] !== G.solution[i]) w.push(i); closeSheet(); hint = w.length ? { type: "error", cells: w } : null; hintLevel = 1; if (hint) renderHint(); else { const el = document.getElementById("hint"); el.innerHTML = `<h2><span class="dot"></span>Tout est bon</h2><p>Aucune erreur pour l'instant, continue comme ça.</p><div class="actions"><button class="pill" data-act="close">Fermer</button></div>`; el.classList.add("open"); } render(); }
+  else if (act === "settings") showSettings();
+  else if (act === "stats") showStats();
+  else if (act === "help") showHelp();
+  else if (act === "second") { undo(); G.errors = Math.max(0, G.errors - 1); G.lost = false; save(); closeSheet(); render(); }
+});
+sheet.addEventListener("change", e => {
+  const k = e.target.dataset.set; if (!k) return;
+  settings[k] = e.target.checked; store.set("sdk-settings", settings);
+  if (k === "noPencil" && settings.noPencil) noteMode = false;
+  render();
+});
+function applyTheme() { if (settings.theme === "auto") delete document.documentElement.dataset.theme; else document.documentElement.dataset.theme = settings.theme; }
+
+async function startNew(key) {
+  openSheet(`<h2>${DIFFS[key].name}</h2><div class="loading"><span class="spin"></span>Je prépare une grille qui demande les bonnes techniques…</div>`, false);
+  await new Promise(r => setTimeout(r, 30));
+  const g = await generate(key);
+  if (G && !G.done && !G.lost) { const s0 = stats[G.key] || { played: 0, won: 0, best: null }; stats[G.key] = s0; }
+  const st = stats[key] || { played: 0, won: 0, best: null }; st.played++; stats[key] = st; store.set("sdk-stats", stats);
+  G = { key, puzzle: g.puzzle, solution: g.solution, values: g.puzzle.slice(), notes: new Array(81).fill(0), errors: 0, hints: 0, time: 0, done: false, lost: false };
+  history = []; noteMode = false; paused = false; clearHint();
+  selected = g.puzzle.findIndex(x => !x);
+  save(); closeSheet(); render();
+}
+
+/* ---------- Commandes ---------- */
+document.getElementById("menuBtn").addEventListener("click", showMenu);
+document.getElementById("undoBtn").addEventListener("click", undo);
+document.getElementById("eraseBtn").addEventListener("click", erase);
+document.getElementById("notesBtn").addEventListener("click", () => { noteMode = !noteMode; render(); });
+document.getElementById("autoBtn").addEventListener("click", autoNotes);
+document.getElementById("hintBtn").addEventListener("click", askHint);
+document.addEventListener("keydown", e => {
+  if (overlayOpen()) { if (e.key === "Escape" && overlay.dataset.dismiss) closeSheet(); return; }
+  if (!G) return;
+  if ((e.ctrlKey || e.metaKey) && e.key.toLowerCase() === "z") { e.preventDefault(); undo(); return; }
+  if (e.ctrlKey || e.metaKey || e.altKey) return;
+  const k = e.key;
+  if (/^[1-9]$/.test(k)) { input(+k); e.preventDefault(); }
+  else if (k === "Backspace" || k === "Delete" || k === "0") { erase(); e.preventDefault(); }
+  else if (k === "ArrowUp") { selected = (selected + 72) % 81; render(); cells[selected].focus({ preventScroll: true }); e.preventDefault(); }
+  else if (k === "ArrowDown") { selected = (selected + 9) % 81; render(); cells[selected].focus({ preventScroll: true }); e.preventDefault(); }
+  else if (k === "ArrowLeft") { selected = R(selected) * 9 + (C(selected) + 8) % 9; render(); cells[selected].focus({ preventScroll: true }); e.preventDefault(); }
+  else if (k === "ArrowRight") { selected = R(selected) * 9 + (C(selected) + 1) % 9; render(); cells[selected].focus({ preventScroll: true }); e.preventDefault(); }
+  else if (k.toLowerCase() === "n") { if (!settings.noPencil) { noteMode = !noteMode; render(); } }
+  else if (k.toLowerCase() === "h") askHint();
+  else if (k === " ") { setPaused(!paused); e.preventDefault(); }
+});
+
+/* ---------- Démarrage ---------- */
+applyTheme();
+(function boot() {
+  const saved = store.get("sdk-game", null);
+  if (saved && saved.puzzle && !saved.done && DIFFS[saved.key]) { G = saved; selected = G.values.findIndex(x => !x); if (selected < 0) selected = 0; render(); }
+  else showNewGame(false);
+})();
+</script>
+</body>
+</html>
