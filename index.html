@@ -12,21 +12,72 @@
   --bg:#EEF1F5; --surface:#FFFFFF; --surface-2:#F6F8FB; --text:#16202E; --muted:#5E6B7D;
   --line:#C9D1DC; --line-strong:#2B3646; --ink:#16202E; --pen:#2F5FD0; --wrong:#C8323F; --wrong-soft:#FBE3E5;
   --peer:#E4EAF2; --same:#C9D8F5; --sel:#A9C1F2; --hl:#FFD55A; --hl-soft:#FFF1C2; --good:#1B8A5A; --good-soft:#D8F2E5;
-  --btn:#E2E7EE; --btn-text:#16202E; --shadow:0 1px 0 rgba(22,32,46,.06);
+  --btn:#E2E7EE; --btn-text:#16202E; --shadow:0 1px 0 rgba(22,32,46,.06); --on-pen:#fff; --hint-ico:#B98300; --digit:var(--pen);
+  color-scheme:light;
   box-sizing:border-box; padding-top:env(safe-area-inset-top,0px); padding-bottom:env(safe-area-inset-bottom,0px);
   font-family:"Figtree",system-ui,-apple-system,"Segoe UI",sans-serif; color:var(--text);
 }
-@media (prefers-color-scheme:dark){:root:not([data-theme="light"]){
+@media (prefers-color-scheme:dark){:root:not([data-theme]){
   --bg:#12161E; --surface:#1B212C; --surface-2:#222936; --text:#E7ECF4; --muted:#95A1B3;
   --line:#343D4C; --line-strong:#8C98AB; --ink:#E7ECF4; --pen:#7FAEFF; --wrong:#FF6B78; --wrong-soft:#4A1E26;
   --peer:#232B38; --same:#2F4166; --sel:#3C5A94; --hl:#E8B23A; --hl-soft:#4A3B17; --good:#4FD19B; --good-soft:#163A2B;
-  --btn:#262E3B; --btn-text:#E7ECF4; --shadow:none;
+  --btn:#262E3B; --btn-text:#E7ECF4; --shadow:none; --on-pen:#0E1522; --hint-ico:var(--hl); color-scheme:dark;
 }}
 :root[data-theme="dark"]{
   --bg:#12161E; --surface:#1B212C; --surface-2:#222936; --text:#E7ECF4; --muted:#95A1B3;
   --line:#343D4C; --line-strong:#8C98AB; --ink:#E7ECF4; --pen:#7FAEFF; --wrong:#FF6B78; --wrong-soft:#4A1E26;
   --peer:#232B38; --same:#2F4166; --sel:#3C5A94; --hl:#E8B23A; --hl-soft:#4A3B17; --good:#4FD19B; --good-soft:#163A2B;
-  --btn:#262E3B; --btn-text:#E7ECF4; --shadow:none;
+  --btn:#262E3B; --btn-text:#E7ECF4; --shadow:none; --on-pen:#0E1522; --hint-ico:var(--hl); color-scheme:dark;
+}
+/* Thèmes colorés clairs */
+:root[data-theme="papier"]{
+  --bg:#F3EDE2; --surface:#FFFBF3; --surface-2:#F7F0E3; --text:#2E2618; --muted:#7A6B55;
+  --line:#DCCFB8; --line-strong:#4A3D2A; --ink:#2E2618; --pen:#8A4B1F; --wrong:#B3261E; --wrong-soft:#F6DCD6;
+  --peer:#EFE5D3; --same:#E8D3AE; --sel:#DDBF8C; --hl:#F2C14E; --hl-soft:#FAEBC4; --good:#3C7D3A; --good-soft:#DDEFD6;
+  --btn:#EAE0CE; --btn-text:#2E2618; --hint-ico:#9A6A00;
+}
+:root[data-theme="menthe"]{
+  --bg:#EAF3EE; --surface:#FFFFFF; --surface-2:#F3F9F5; --text:#14261D; --muted:#587064;
+  --line:#C4D8CC; --line-strong:#25453A; --ink:#14261D; --pen:#1E7A55; --wrong:#C8323F; --wrong-soft:#FBE3E5;
+  --peer:#E0EEE6; --same:#BFE3D0; --sel:#97D1B4; --hl:#FFD55A; --hl-soft:#FFF1C2; --good:#0F6B8A; --good-soft:#D4EEF5;
+  --btn:#DCEBE2; --btn-text:#14261D;
+}
+:root[data-theme="lavande"]{
+  --bg:#F1EEF8; --surface:#FFFFFF; --surface-2:#F7F5FC; --text:#221B35; --muted:#6B6285;
+  --line:#D3CCE6; --line-strong:#3A2F5A; --ink:#221B35; --pen:#6A48C9; --wrong:#C8323F; --wrong-soft:#FBE3E5;
+  --peer:#EAE5F6; --same:#D9CCF5; --sel:#BFA9F0; --hl:#FFD55A; --hl-soft:#FFF1C2; --good:#1B8A5A; --good-soft:#D8F2E5;
+  --btn:#E4DEF3; --btn-text:#221B35;
+}
+:root[data-theme="sakura"]{
+  --bg:#FAF0F2; --surface:#FFFFFF; --surface-2:#FDF6F7; --text:#33191F; --muted:#85606A;
+  --line:#EACFD5; --line-strong:#5A2D38; --ink:#33191F; --pen:#B23A7C; --wrong:#D03A1B; --wrong-soft:#FCE3DA;
+  --peer:#F7E6EA; --same:#F3CFD9; --sel:#EBA9BD; --hl:#FFD55A; --hl-soft:#FFF1C2; --good:#1B8A5A; --good-soft:#D8F2E5;
+  --btn:#F3E1E6; --btn-text:#33191F;
+}
+:root[data-theme="contraste"]{
+  --bg:#FFFFFF; --surface:#FFFFFF; --surface-2:#F2F2F2; --text:#000000; --muted:#333333;
+  --line:#777777; --line-strong:#000000; --ink:#000000; --pen:#0038A8; --wrong:#C00000; --wrong-soft:#FFD6D6;
+  --peer:#E6E6E6; --same:#BBD0FF; --sel:#7FA6FF; --hl:#FFD000; --hl-soft:#FFF3B0; --good:#006B2E; --good-soft:#C8F0D6;
+  --btn:#E6E6E6; --btn-text:#000000; --hint-ico:#8A6100;
+}
+/* Thèmes colorés sombres */
+:root[data-theme="ocean"]{
+  --bg:#0C1B24; --surface:#122833; --surface-2:#17313E; --text:#DDEFF5; --muted:#8AA9B6;
+  --line:#24424F; --line-strong:#7FA3B2; --ink:#E6F4F8; --pen:#4FD1E0; --wrong:#FF6B78; --wrong-soft:#4A1E26;
+  --peer:#173340; --same:#1E4A5C; --sel:#26647A; --hl:#E8B23A; --hl-soft:#4A3B17; --good:#6EE7A8; --good-soft:#16392B;
+  --btn:#1A3441; --btn-text:#DDEFF5; --shadow:none; --on-pen:#06161D; --hint-ico:var(--hl); color-scheme:dark;
+}
+:root[data-theme="foret"]{
+  --bg:#111A14; --surface:#18241C; --surface-2:#1E2C23; --text:#E3EFE6; --muted:#93A89A;
+  --line:#2E3F34; --line-strong:#8AA392; --ink:#E3EFE6; --pen:#7ED69A; --wrong:#FF7A6B; --wrong-soft:#4A2320;
+  --peer:#1F2E24; --same:#2C4A35; --sel:#3A6A49; --hl:#E8B23A; --hl-soft:#4A3B17; --good:#6EC9F0; --good-soft:#16323E;
+  --btn:#22322A; --btn-text:#E3EFE6; --shadow:none; --on-pen:#0B140E; --hint-ico:var(--hl); color-scheme:dark;
+}
+:root[data-theme="minuit"]{
+  --bg:#14111F; --surface:#1C1829; --surface-2:#241F34; --text:#ECE8F7; --muted:#A29BB9;
+  --line:#352F4A; --line-strong:#9990B5; --ink:#ECE8F7; --pen:#B69CFF; --wrong:#FF6B8A; --wrong-soft:#4A1E2C;
+  --peer:#241F35; --same:#3A2F5E; --sel:#52418A; --hl:#E8B23A; --hl-soft:#4A3B17; --good:#4FD19B; --good-soft:#163A2B;
+  --btn:#2A2440; --btn-text:#ECE8F7; --shadow:none; --on-pen:#120E1F; --hint-ico:var(--hl); color-scheme:dark;
 }
 html{height:100%;scroll-padding-top:env(safe-area-inset-top,0px)}
 *{box-sizing:border-box}
@@ -67,7 +118,7 @@ button:focus-visible,.cell:focus-visible{outline:3px solid var(--pen);outline-of
 .cell.errmark{box-shadow:inset 0 0 0 3px var(--wrong)}
 .val{font-size:clamp(20px,6.6vw,32px);line-height:1}
 .given .val{font-family:"Fraunces",Georgia,serif;font-weight:600;color:var(--ink)}
-.user .val{font-family:"Kalam","Figtree",cursive;font-weight:700;color:var(--pen);transform:translateY(2px)}
+.user .val{font-family:"Kalam","Figtree",cursive;font-weight:700;color:var(--digit);transform:translateY(2px)}
 .wrong .val{color:var(--wrong)}
 .notes{display:grid;grid-template-columns:repeat(3,1fr);grid-template-rows:repeat(3,1fr);width:100%;height:100%;padding:1px 2px;color:var(--muted);font-size:clamp(9px,2.4vw,12px);font-weight:600;line-height:1}
 .notes span{display:grid;place-items:center}
@@ -86,9 +137,7 @@ button:focus-visible,.cell:focus-visible{outline:3px solid var(--pen);outline-of
 .hint .legend i{display:inline-block;width:12px;height:12px;border-radius:3px;vertical-align:-1px;margin-right:5px}
 .hint .actions{display:flex;flex-wrap:wrap;gap:8px;margin-top:10px}
 .pill{border:0;border-radius:999px;padding:10px 16px;background:var(--btn);color:var(--btn-text);font-weight:600;font-size:14px}
-.pill.primary{background:var(--pen);color:#fff}
-:root[data-theme="dark"] .pill.primary{color:#0E1522}
-@media (prefers-color-scheme:dark){:root:not([data-theme="light"]) .pill.primary{color:#0E1522}}
+.pill.primary{background:var(--pen);color:var(--on-pen)}
 .tools{display:grid;grid-template-columns:repeat(5,1fr);gap:4px;margin:14px 0 10px}
 .tool{border:0;background:transparent;border-radius:12px;padding:6px 2px;display:flex;flex-direction:column;align-items:center;gap:4px;font-size:12.5px;color:var(--muted);position:relative}
 .tool svg{width:26px;height:26px;color:var(--text)}
@@ -97,13 +146,11 @@ button:focus-visible,.cell:focus-visible{outline:3px solid var(--pen);outline-of
 .tool.on svg{color:var(--pen)}
 .tool .badge{position:absolute;top:0;right:calc(50% - 26px);background:var(--muted);color:var(--surface);font-size:10.5px;font-weight:700;border-radius:999px;padding:1px 6px}
 .tool.on .badge{background:var(--pen)}
-.tool.hintbtn svg{color:#B98300}
-@media (prefers-color-scheme:dark){:root:not([data-theme="light"]) .tool.hintbtn svg{color:var(--hl)}}
-:root[data-theme="dark"] .tool.hintbtn svg{color:var(--hl)}
+.tool.hintbtn svg{color:var(--hint-ico)}
 .tool[hidden]{display:none}
 .pad{display:grid;grid-template-columns:repeat(9,1fr);gap:5px}
 .num{border:0;background:var(--btn);border-radius:12px;padding:8px 0 6px;display:flex;flex-direction:column;align-items:center;min-height:64px;justify-content:center}
-.num .d{font-family:"Fraunces",Georgia,serif;font-weight:600;font-size:clamp(22px,6.4vw,30px);line-height:1;color:var(--pen)}
+.num .d{font-family:"Fraunces",Georgia,serif;font-weight:600;font-size:clamp(22px,6.4vw,30px);line-height:1;color:var(--digit)}
 .num .left{font-size:11.5px;color:var(--muted);margin-top:3px}
 .num.done{opacity:.28}
 .num.hidden{visibility:hidden}
@@ -140,6 +187,20 @@ button:focus-visible,.cell:focus-visible{outline:3px solid var(--pen);outline-of
 .spin{width:18px;height:18px;border:2.5px solid var(--line);border-top-color:var(--pen);border-radius:50%;animation:sp 0.8s linear infinite}
 @keyframes sp{to{transform:rotate(360deg)}}
 @media (prefers-reduced-motion:reduce){.spin{animation:none}.switch,.switch::after{transition:none}}
+.setlabel{font-size:15px;margin:14px 2px 8px}
+.swatches{display:grid;grid-template-columns:repeat(auto-fill,minmax(88px,1fr));gap:8px;padding-bottom:12px;border-bottom:1px solid var(--line)}
+.swatch{border:2px solid transparent;background:var(--surface-2);border-radius:12px;padding:8px 4px 7px;display:flex;flex-direction:column;align-items:center;gap:6px;font-size:12.5px;font-weight:600}
+.swatch.on{border-color:var(--pen)}
+.swatch .prev{width:38px;height:38px;border-radius:10px;display:grid;place-items:center;font-family:"Kalam",cursive;font-weight:700;font-size:22px;border:1px solid rgba(0,0,0,.15)}
+.dots{display:flex;flex-wrap:wrap;gap:10px;padding-bottom:12px;border-bottom:1px solid var(--line)}
+.dotbtn{width:40px;height:40px;border-radius:50%;border:3px solid var(--surface);box-shadow:0 0 0 2px var(--line);display:grid;place-items:center;font-family:"Kalam",cursive;font-weight:700;font-size:20px;color:#fff;padding:0;position:relative;overflow:hidden}
+.dotbtn.on{box-shadow:0 0 0 3px var(--pen)}
+.dotbtn.theme{background:var(--pen)}
+.dotbtn input{position:absolute;inset:0;opacity:0;width:100%;height:100%;cursor:pointer;border:0;padding:0}
+.dotbtn.custom{background:conic-gradient(#e33,#ec3,#3c5,#3be,#55e,#d3d,#e33)}
+kbd{font:inherit;font-weight:700;background:var(--btn);border-radius:5px;padding:0 5px;border-bottom:2px solid var(--line)}
+.keybtn{min-width:64px}
+.keybtn.wait{background:var(--hl);color:#1D1606}
 .help h3{font-size:16px;margin:14px 0 4px}
 .help p{margin:4px 0;line-height:1.55;font-size:14.5px}
 </style>
@@ -179,7 +240,7 @@ button:focus-visible,.cell:focus-visible{outline:3px solid var(--pen);outline-of
   </div>
 
   <div class="pad" id="pad"></div>
-  <p class="foot">Clavier : chiffres, flèches, Suppr, N pour les notes, H pour l'aide, Ctrl+Z pour annuler.</p>
+  <p class="foot" id="foot"></p>
 </div>
 
 <div class="overlay" id="overlay"><div class="sheet" id="sheet"></div></div>
@@ -458,9 +519,60 @@ const store = {
   get(k, def) { try { const v = localStorage.getItem(k); return v ? JSON.parse(v) : def; } catch (e) { return def; } },
   set(k, v) { try { localStorage.setItem(k, JSON.stringify(v)); } catch (e) {} }
 };
-const DEFAULT_SETTINGS = { errorLimit: true, autoCheck: true, autoRemoveNotes: true, hlPeers: true, hlSame: true, hideDone: true, showTimer: true, coords: true, noPencil: false, theme: "auto" };
+const DEFAULT_SETTINGS = { errorLimit: true, autoCheck: true, autoRemoveNotes: true, hlPeers: true, hlSame: true, hideDone: true, showTimer: true, coords: true, noPencil: false, theme: "auto", digitColor: "theme", digitCustom: "#E0457B", pencilKey: "n" };
 let settings = Object.assign({}, DEFAULT_SETTINGS, store.get("sdk-settings", {}));
 let stats = store.get("sdk-stats", {});
+
+/* ---------- Thèmes et couleur des chiffres ---------- */
+// prev : [fond, surface, accent] pour l'aperçu ; dark : null = suit le système
+const THEMES = {
+  auto:      { name: "Auto",      dark: null,  prev: ["#EEF1F5", "#1B212C", "#2F5FD0"] },
+  light:     { name: "Clair",     dark: false, prev: ["#EEF1F5", "#FFFFFF", "#2F5FD0"] },
+  dark:      { name: "Sombre",    dark: true,  prev: ["#12161E", "#1B212C", "#7FAEFF"] },
+  papier:    { name: "Papier",    dark: false, prev: ["#F3EDE2", "#FFFBF3", "#8A4B1F"] },
+  menthe:    { name: "Menthe",    dark: false, prev: ["#EAF3EE", "#FFFFFF", "#1E7A55"] },
+  lavande:   { name: "Lavande",   dark: false, prev: ["#F1EEF8", "#FFFFFF", "#6A48C9"] },
+  sakura:    { name: "Sakura",    dark: false, prev: ["#FAF0F2", "#FFFFFF", "#B23A7C"] },
+  contraste: { name: "Contraste", dark: false, prev: ["#FFFFFF", "#FFFFFF", "#0038A8"] },
+  ocean:     { name: "Océan",     dark: true,  prev: ["#0C1B24", "#122833", "#4FD1E0"] },
+  foret:     { name: "Forêt",     dark: true,  prev: ["#111A14", "#18241C", "#7ED69A"] },
+  minuit:    { name: "Minuit",    dark: true,  prev: ["#14111F", "#1C1829", "#B69CFF"] }
+};
+// Pas de rouge : il est réservé aux erreurs. l = sur fond clair, d = sur fond sombre.
+const DIGIT_COLORS = {
+  theme:     { name: "Couleur du thème" },
+  bleu:      { name: "Bleu",      l: "#2F5FD0", d: "#7FAEFF" },
+  vert:      { name: "Vert",      l: "#1B7F4B", d: "#5BD69A" },
+  turquoise: { name: "Turquoise", l: "#0A7F8C", d: "#4FD6E0" },
+  violet:    { name: "Violet",    l: "#7A3FD0", d: "#B99BFF" },
+  rose:      { name: "Rose",      l: "#C0307A", d: "#FF8FC4" },
+  orange:    { name: "Orange",    l: "#C25E00", d: "#FFA34D" },
+  encre:     { name: "Encre",     l: "#16202E", d: "#F2F5FA" }
+};
+if (!THEMES[settings.theme]) settings.theme = "auto";
+if (settings.digitColor !== "custom" && !DIGIT_COLORS[settings.digitColor]) settings.digitColor = "theme";
+const darkMQ = window.matchMedia("(prefers-color-scheme: dark)");
+function isDark() { const d = THEMES[settings.theme].dark; return d == null ? darkMQ.matches : d; }
+function applyTheme() {
+  const root = document.documentElement;
+  if (settings.theme === "auto") delete root.dataset.theme; else root.dataset.theme = settings.theme;
+  let col = null;
+  if (settings.digitColor === "custom") col = settings.digitCustom;
+  else if (settings.digitColor !== "theme") col = DIGIT_COLORS[settings.digitColor][isDark() ? "d" : "l"];
+  if (col) root.style.setProperty("--digit", col); else root.style.removeProperty("--digit");
+}
+darkMQ.addEventListener("change", () => { applyTheme(); if (overlayOpen() && sheet.querySelector(".swatches")) showSettings(); });
+
+/* ---------- Touche du mode crayon ---------- */
+// Touches déjà prises par le jeu (chiffres, déplacements, aide, pause…)
+const RESERVED_KEYS = new Set(["h", " ", "backspace", "delete", "escape", "tab", "enter", "arrowup", "arrowdown", "arrowleft", "arrowright", "shift", "control", "alt", "altgraph", "meta", "capslock", "dead"]);
+let capturingKey = false;
+function keyLabel(k) { return k.length === 1 ? k.toUpperCase() : k; }
+function renderFoot() {
+  const k = keyLabel(settings.pencilKey);
+  document.getElementById("foot").innerHTML = `Clavier : chiffres, flèches, Suppr, <kbd>${esc(k)}</kbd> pour le mode crayon, <kbd>H</kbd> pour l'aide, <kbd>Espace</kbd> pour la pause, <kbd>Ctrl+Z</kbd> pour annuler.`;
+  document.getElementById("notesBtn").title = `Mode crayon (touche ${k})`;
+}
 
 /* ---------- État de la partie ---------- */
 let G = null; // { key, puzzle, solution, values, notes, errors, hints, time, done, lost }
@@ -713,7 +825,22 @@ function showMenu() {
 function toggleRow(key, title, desc) { return `<label class="row"><div><div class="t">${title}</div>${desc ? `<div class="d2">${desc}</div>` : ""}</div><input type="checkbox" class="switch" data-set="${key}" ${settings[key] ? "checked" : ""}></label>`; }
 function showSettings() {
   openSheet(`${X}<h2>Réglages</h2><p class="sub">Enregistrés sur cet appareil.</p>
-    <div class="row"><div class="t">Thème</div><div class="seg">${[["auto", "Auto"], ["light", "Clair"], ["dark", "Sombre"]].map(([k, l]) => `<button data-theme-set="${k}" class="${settings.theme === k ? "on" : ""}">${l}</button>`).join("")}</div></div>
+    <div class="setlabel t">Thème</div>
+    <div class="swatches">${Object.entries(THEMES).map(([k, t]) => {
+      const [bg, sf, ac] = t.prev;
+      const box = k === "auto" ? `background:linear-gradient(135deg,${bg} 50%,${sf} 50%);color:${ac}` : `background:${sf};box-shadow:inset 0 0 0 5px ${bg};color:${ac}`;
+      return `<button class="swatch ${settings.theme === k ? "on" : ""}" data-theme-set="${k}" aria-pressed="${settings.theme === k}"><span class="prev" style="${box}">7</span>${t.name}</button>`;
+    }).join("")}</div>
+    <div class="setlabel t">Couleur de tes chiffres</div>
+    <div class="dots">${Object.entries(DIGIT_COLORS).map(([k, c]) => {
+      const on = settings.digitColor === k;
+      return k === "theme"
+        ? `<button class="dotbtn theme ${on ? "on" : ""}" data-digit-set="theme" title="${c.name}" aria-label="${c.name}" aria-pressed="${on}" style="color:var(--on-pen)">7</button>`
+        : `<button class="dotbtn ${on ? "on" : ""}" data-digit-set="${k}" title="${c.name}" aria-label="${c.name}" aria-pressed="${on}" style="background:${c[isDark() ? "d" : "l"]};color:${isDark() ? "#0E1522" : "#fff"}">7</button>`;
+    }).join("")}
+      <label class="dotbtn custom ${settings.digitColor === "custom" ? "on" : ""}" title="Couleur perso" style="${settings.digitColor === "custom" ? `background:${settings.digitCustom}` : ""}"><input type="color" id="digitCustom" value="${settings.digitCustom}" aria-label="Choisir une couleur perso"></label>
+    </div>
+    <div class="row"><div><div class="t">Touche du mode crayon</div><div class="d2">Sur ordinateur, active ou coupe les notes</div></div><button class="pill keybtn" id="keyBtn" data-act="pickKey">${esc(keyLabel(settings.pencilKey))}</button></div>
     ${toggleRow("noPencil", "Mode sans crayon", "Cache les notes pour t'entraîner à tout voir de tête")}
     ${toggleRow("autoCheck", "Signaler les erreurs", "Un mauvais chiffre s'affiche en rouge")}
     ${toggleRow("errorLimit", "Limite de 3 erreurs", "La partie s'arrête à la 3ᵉ erreur")}
@@ -753,6 +880,7 @@ function showLost() {
 sheet.addEventListener("click", e => {
   const n = e.target.closest("[data-new]"); if (n) { startNew(n.dataset.new); return; }
   const t = e.target.closest("[data-theme-set]"); if (t) { settings.theme = t.dataset.themeSet; store.set("sdk-settings", settings); applyTheme(); showSettings(); return; }
+  const dc = e.target.closest("[data-digit-set]"); if (dc) { settings.digitColor = dc.dataset.digitSet; store.set("sdk-settings", settings); applyTheme(); showSettings(); return; }
   const a = e.target.closest("[data-act]"); if (!a) return;
   const act = a.dataset.act;
   if (act === "closeSheet") closeSheet();
@@ -760,17 +888,24 @@ sheet.addEventListener("click", e => {
   else if (act === "restart") { G.values = G.puzzle.slice(); G.notes = new Array(81).fill(0); G.errors = 0; G.time = 0; G.done = false; G.lost = false; history = []; clearHint(); save(); closeSheet(); render(); }
   else if (act === "check") { const w = []; for (let i = 0; i < 81; i++) if (G.values[i] && G.values[i] !== G.solution[i]) w.push(i); closeSheet(); hint = w.length ? { type: "error", cells: w } : null; hintLevel = 1; if (hint) renderHint(); else { const el = document.getElementById("hint"); el.innerHTML = `<h2><span class="dot"></span>Tout est bon</h2><p>Aucune erreur pour l'instant, continue comme ça.</p><div class="actions"><button class="pill" data-act="close">Fermer</button></div>`; el.classList.add("open"); } render(); }
   else if (act === "settings") showSettings();
+  else if (act === "pickKey") { capturingKey = true; a.textContent = "Appuie…"; a.classList.add("wait"); }
   else if (act === "stats") showStats();
   else if (act === "help") showHelp();
   else if (act === "second") { undo(); G.errors = Math.max(0, G.errors - 1); G.lost = false; save(); closeSheet(); render(); }
 });
+sheet.addEventListener("input", e => {
+  if (e.target.id !== "digitCustom") return;
+  settings.digitColor = "custom"; settings.digitCustom = e.target.value; applyTheme();
+  const lbl = e.target.parentElement; lbl.style.background = e.target.value;
+  sheet.querySelectorAll(".dotbtn").forEach(b => b.classList.toggle("on", b === lbl));
+});
 sheet.addEventListener("change", e => {
+  if (e.target.id === "digitCustom") { store.set("sdk-settings", settings); return; }
   const k = e.target.dataset.set; if (!k) return;
   settings[k] = e.target.checked; store.set("sdk-settings", settings);
   if (k === "noPencil" && settings.noPencil) noteMode = false;
   render();
 });
-function applyTheme() { if (settings.theme === "auto") delete document.documentElement.dataset.theme; else document.documentElement.dataset.theme = settings.theme; }
 
 async function startNew(key) {
   openSheet(`<h2>${DIFFS[key].name}</h2><div class="loading"><span class="spin"></span>Je prépare une grille qui demande les bonnes techniques…</div>`, false);
@@ -792,24 +927,36 @@ document.getElementById("notesBtn").addEventListener("click", () => { noteMode =
 document.getElementById("autoBtn").addEventListener("click", autoNotes);
 document.getElementById("hintBtn").addEventListener("click", askHint);
 document.addEventListener("keydown", e => {
+  if (capturingKey) {
+    e.preventDefault(); e.stopPropagation();
+    const k = e.key.toLowerCase(), btn = document.getElementById("keyBtn");
+    if (k === "escape") { capturingKey = false; if (btn) { btn.textContent = keyLabel(settings.pencilKey); btn.classList.remove("wait"); } return; }
+    if (RESERVED_KEYS.has(k) || /^(Digit|Numpad)/.test(e.code) || e.ctrlKey || e.metaKey) { if (btn) btn.textContent = "Pas celle-là"; return; }
+    capturingKey = false; settings.pencilKey = k; store.set("sdk-settings", settings); renderFoot();
+    if (btn) { btn.textContent = keyLabel(k); btn.classList.remove("wait"); }
+    return;
+  }
   if (overlayOpen()) { if (e.key === "Escape" && overlay.dataset.dismiss) closeSheet(); return; }
   if (!G) return;
   if ((e.ctrlKey || e.metaKey) && e.key.toLowerCase() === "z") { e.preventDefault(); undo(); return; }
   if (e.ctrlKey || e.metaKey || e.altKey) return;
   const k = e.key;
-  if (/^[1-9]$/.test(k)) { input(+k); e.preventDefault(); }
-  else if (k === "Backspace" || k === "Delete" || k === "0") { erase(); e.preventDefault(); }
+  // e.code = touche physique : marche aussi en AZERTY sans Maj (où e.key vaut "&", "é"…)
+  const dm = /^(?:Digit|Numpad)([0-9])$/.exec(e.code);
+  const digit = dm ? +dm[1] : /^[0-9]$/.test(k) ? +k : -1;
+  if (k.toLowerCase() === settings.pencilKey) { if (!settings.noPencil) { noteMode = !noteMode; render(); } e.preventDefault(); }
+  else if (digit >= 1) { input(digit); e.preventDefault(); }
+  else if (k === "Backspace" || k === "Delete" || digit === 0) { erase(); e.preventDefault(); }
   else if (k === "ArrowUp") { selected = (selected + 72) % 81; render(); cells[selected].focus({ preventScroll: true }); e.preventDefault(); }
   else if (k === "ArrowDown") { selected = (selected + 9) % 81; render(); cells[selected].focus({ preventScroll: true }); e.preventDefault(); }
   else if (k === "ArrowLeft") { selected = R(selected) * 9 + (C(selected) + 8) % 9; render(); cells[selected].focus({ preventScroll: true }); e.preventDefault(); }
   else if (k === "ArrowRight") { selected = R(selected) * 9 + (C(selected) + 1) % 9; render(); cells[selected].focus({ preventScroll: true }); e.preventDefault(); }
-  else if (k.toLowerCase() === "n") { if (!settings.noPencil) { noteMode = !noteMode; render(); } }
   else if (k.toLowerCase() === "h") askHint();
   else if (k === " ") { setPaused(!paused); e.preventDefault(); }
 });
 
 /* ---------- Démarrage ---------- */
-applyTheme();
+applyTheme(); renderFoot();
 (function boot() {
   const saved = store.get("sdk-game", null);
   if (saved && saved.puzzle && !saved.done && DIFFS[saved.key]) { G = saved; selected = G.values.findIndex(x => !x); if (selected < 0) selected = 0; render(); }
