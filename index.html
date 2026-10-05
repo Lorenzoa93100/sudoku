@@ -201,6 +201,16 @@ button:focus-visible,.cell:focus-visible{outline:3px solid var(--pen);outline-of
 kbd{font:inherit;font-weight:700;background:var(--btn);border-radius:5px;padding:0 5px;border-bottom:2px solid var(--line)}
 .keybtn{min-width:64px}
 .keybtn.wait{background:var(--hl);color:#1D1606}
+.codebox{display:flex;align-items:center;justify-content:space-between;gap:10px;background:var(--surface-2);border-radius:12px;padding:10px 12px;margin:0 0 12px}
+.codebox .lbl{color:var(--muted);font-size:12.5px}
+.codebox b{font-family:ui-monospace,"SF Mono",Menlo,monospace;font-size:17px;letter-spacing:.06em}
+.codein{width:100%;font:inherit;font-family:ui-monospace,"SF Mono",Menlo,monospace;font-size:20px;letter-spacing:.08em;text-transform:uppercase;padding:12px 14px;border-radius:12px;border:2px solid var(--line);background:var(--surface-2);color:var(--text)}
+.codein:focus{outline:none;border-color:var(--pen)}
+.codeerr{color:var(--wrong);font-size:13.5px;min-height:1.4em;margin:6px 2px}
+.linkbtn{border:0;background:transparent;color:var(--pen);font-weight:600;font-size:14px;padding:10px 4px;margin-top:6px}
+.shareimg{display:block;width:100%;max-width:220px;margin:12px auto 0;border-radius:12px;box-shadow:0 0 0 1px var(--line)}
+.toast{position:fixed;left:50%;bottom:calc(24px + env(safe-area-inset-bottom,0px));transform:translateX(-50%);background:var(--text);color:var(--bg);padding:10px 16px;border-radius:999px;font-size:14px;font-weight:600;z-index:20;opacity:0;pointer-events:none;transition:opacity .2s;max-width:calc(100% - 32px);text-align:center}
+.toast.show{opacity:1}
 .help h3{font-size:16px;margin:14px 0 4px}
 .help p{margin:4px 0;line-height:1.55;font-size:14.5px}
 </style>
@@ -243,6 +253,7 @@ kbd{font:inherit;font-weight:700;background:var(--btn);border-radius:5px;padding
   <p class="foot" id="foot"></p>
 </div>
 
+<div class="toast" id="toast" role="status"></div>
 <div class="overlay" id="overlay"><div class="sheet" id="sheet"></div></div>
 
 <script>
@@ -259,7 +270,11 @@ const ALL = 0x3FE;
 const bit = d => 1 << d;
 const pop = m => { let n = 0; while (m) { m &= m - 1; n++; } return n; };
 const digitsOf = m => { const a = []; for (let d = 1; d <= 9; d++) if (m & bit(d)) a.push(d); return a; };
-const shuffle = a => { for (let i = a.length - 1; i > 0; i--) { const j = (Math.random() * (i + 1)) | 0; [a[i], a[j]] = [a[j], a[i]]; } return a; };
+// Générateur aléatoire remplaçable : une seed donne toujours la même grille
+let rand = Math.random;
+function mulberry32(a) { return () => { a = (a + 0x6D2B79F5) | 0; let t = Math.imul(a ^ (a >>> 15), 1 | a); t = (t + Math.imul(t ^ (t >>> 7), 61 | t)) ^ t; return ((t ^ (t >>> 14)) >>> 0) / 4294967296; }; }
+function hashStr(str) { let h = 2166136261; for (let k = 0; k < str.length; k++) { h ^= str.charCodeAt(k); h = Math.imul(h, 16777619); } return h >>> 0; }
+const shuffle = a => { for (let i = a.length - 1; i > 0; i--) { const j = (rand() * (i + 1)) | 0; [a[i], a[j]] = [a[j], a[i]]; } return a; };
 const BOX_NAMES = ["en haut à gauche", "en haut au milieu", "en haut à droite", "du milieu à gauche", "du centre", "du milieu à droite", "en bas à gauche", "en bas au milieu", "en bas à droite"];
 const unitName = u => u < 9 ? `la ligne ${u + 1}` : u < 18 ? `la colonne ${u - 8}` : `le bloc ${BOX_NAMES[u - 18]}`;
 const cellName = i => `L${R(i) + 1}C${C(i) + 1}`;
@@ -501,14 +516,34 @@ function carve(sol, min) {
   }
   return p;
 }
+/* ---------- Codes de grille (seed) ---------- */
+// Code = lettre de difficulté + 7 caractères, ex. « E-7KQ2MXP ». Sans 0/O, 1/I/L pour éviter les confusions.
+const SEED_ABC = "23456789ABCDEFGHJKMNPQRSTUVWXYZ";
+const DIFF_LETTER = { facile: "F", moyen: "M", difficile: "D", expert: "E", extreme: "X" };
+function randomCode(key) { const a = new Uint32Array(7); crypto.getRandomValues(a); return DIFF_LETTER[key] + "-" + [...a].map(x => SEED_ABC[x % SEED_ABC.length]).join(""); }
+function parseCode(str) {
+  const s = String(str || "").toUpperCase().replace(/[^0-9A-Z]/g, "");
+  if (s.length !== 8) return null;
+  const key = Object.keys(DIFF_LETTER).find(k => DIFF_LETTER[k] === s[0]);
+  if (!key || [...s.slice(1)].some(c => !SEED_ABC.includes(c))) return null;
+  return { key, code: s[0] + "-" + s.slice(1) };
+}
+function puzzleFromCode(code, key) {
+  rand = mulberry32(hashStr(code));
+  try { const sol = fullGrid(); return { puzzle: carve(sol, DIFFS[key].min), solution: sol }; }
+  finally { rand = Math.random; }
+}
+function shareUrl(code) { return location.origin + location.pathname + "?g=" + code; }
+
 async function generate(key) {
   const cfg = DIFFS[key]; const t0 = performance.now(); const budget = key === "extreme" || key === "expert" ? 9000 : 3000;
   let best = null;
+  // Chaque essai a sa propre seed : on garde celle qui donne le bon niveau, elle suffit à recréer la grille
   while (performance.now() - t0 < budget) {
-    const sol = fullGrid(); const p = carve(sol, cfg.min); const lvl = grade(p);
-    if (cfg.ok(lvl) && lvl !== 99) return { puzzle: p, solution: sol, level: lvl };
+    const code = randomCode(key); const { puzzle: p, solution: sol } = puzzleFromCode(code, key); const lvl = grade(p);
+    if (cfg.ok(lvl) && lvl !== 99) return { puzzle: p, solution: sol, level: lvl, code };
     const score = Math.abs((lvl === 99 ? 6 : lvl) - cfg.want) + (lvl === 99 ? 0.5 : 0);
-    if (!best || score < best.score) best = { puzzle: p, solution: sol, level: lvl, score };
+    if (!best || score < best.score) best = { puzzle: p, solution: sol, level: lvl, score, code };
     await new Promise(r => setTimeout(r, 0));
   }
   return best;
@@ -575,7 +610,7 @@ function renderFoot() {
 }
 
 /* ---------- État de la partie ---------- */
-let G = null; // { key, puzzle, solution, values, notes, errors, hints, time, done, lost }
+let G = null; // { key, seed, puzzle, solution, values, notes, errors, hints, time, done, lost }
 let selected = 40, noteMode = false, paused = false, history = [], hint = null, hintLevel = 0;
 
 const boardEl = document.getElementById("board");
@@ -811,11 +846,28 @@ const X = `<button class="iconbtn close" data-act="closeSheet" aria-label="Ferme
 
 function showNewGame(dismissable = true) {
   openSheet(`${dismissable ? X : ""}<h2>Nouvelle partie</h2><p class="sub">Choisis la difficulté.</p><div class="diffs">
-    ${Object.entries(DIFFS).map(([k, d]) => `<button class="diff" data-new="${k}"><div><b>${d.name}</b><br><span>${d.desc}</span></div></button>`).join("")}</div>`, dismissable);
+    ${Object.entries(DIFFS).map(([k, d]) => `<button class="diff" data-new="${k}"><div><b>${d.name}</b><br><span>${d.desc}</span></div></button>`).join("")}</div>
+    <button class="linkbtn" data-act="code">J'ai un code de grille</button>`, dismissable);
+}
+function showCodeEntry() {
+  openSheet(`${X}<h2>Jouer avec un code</h2><p class="sub">Entre le code qu'on t'a envoyé (par exemple E-7KQ2MXP) pour jouer exactement la même grille.</p>
+    <input class="codein" id="codeInput" maxlength="12" autocomplete="off" autocapitalize="characters" spellcheck="false" placeholder="E-XXXXXXX" aria-label="Code de la grille">
+    <p class="codeerr" id="codeErr"></p>
+    <button class="pill primary" data-act="playCode">Jouer cette grille</button>`);
+  const inp = document.getElementById("codeInput"); inp.focus();
+  inp.addEventListener("keydown", e => { if (e.key === "Enter") playCodeInput(); });
+}
+function playCodeInput() {
+  const c = parseCode(document.getElementById("codeInput").value);
+  if (!c) { document.getElementById("codeErr").textContent = "Ce code n'est pas valide. Vérifie les lettres et chiffres."; return; }
+  startFromCode(c.code, c.key);
 }
 function showMenu() {
-  openSheet(`${X}<h2>Menu</h2><p class="sub">${G ? DIFFS[G.key].name + " · " + fmt(G.time) : ""}</p><div class="menu">
+  openSheet(`${X}<h2>Menu</h2><p class="sub">${G ? DIFFS[G.key].name + " · " + fmt(G.time) : ""}</p>
+    ${G && G.seed ? `<div class="codebox"><div><div class="lbl">Code de la grille</div><b>${G.seed}</b></div><button class="pill" data-act="shareGrid">Défier un ami</button></div>` : ""}
+    <div class="menu">
     <button data-act="new">Nouvelle partie</button>
+    <button data-act="code">Jouer avec un code</button>
     <button data-act="restart">Recommencer cette grille</button>
     <button data-act="check">Vérifier ma grille</button>
     <button data-act="settings">Réglages</button>
@@ -867,11 +919,86 @@ function showHelp() {
     <h3>Raisonnement par l'absurde</h3><p>On teste un chiffre et on suit les dominos. Si on tombe sur une impossibilité, le test était faux.</p>
   </div>`);
 }
+let winFile = null, winImgUrl = null;
 function showWin() {
   const st = stats[G.key] || {};
-  openSheet(`<h2>Grille terminée</h2><p class="sub">${DIFFS[G.key].name}</p><div class="big">${fmt(G.time)}</div>
+  openSheet(`<h2>Grille terminée</h2><p class="sub">${DIFFS[G.key].name}${G.seed ? ` · code ${G.seed}` : ""}</p><div class="big">${fmt(G.time)}</div>
     <p>${G.errors} erreur(s), ${G.hints} aide(s)${st.best === G.time ? ". Nouveau record !" : "."}</p>
-    <div class="actions" style="display:flex;gap:8px;margin-top:14px"><button class="pill primary" data-act="new">Nouvelle partie</button></div>`, false);
+    <div class="actions" style="display:flex;flex-wrap:wrap;gap:8px;margin-top:14px"><button class="pill primary" data-act="shareWin">Partager</button><a class="pill" id="dlImg" hidden style="text-decoration:none">Télécharger l'image</a><button class="pill" data-act="new">Nouvelle partie</button></div>
+    <img class="shareimg" id="shareImg" alt="Image de la grille terminée" hidden>`, false);
+  // L'image est préparée tout de suite : sur iPhone, le partage doit partir directement du clic
+  winFile = null;
+  resultCard().then(blob => {
+    if (!blob) return;
+    winFile = new File([blob], `sudoku-${G.seed || "grille"}.png`, { type: "image/png" });
+    if (winImgUrl) URL.revokeObjectURL(winImgUrl);
+    winImgUrl = URL.createObjectURL(blob);
+    const img = document.getElementById("shareImg"), dl = document.getElementById("dlImg");
+    if (img) { img.src = winImgUrl; img.hidden = false; }
+    if (dl) { dl.href = winImgUrl; dl.download = winFile.name; dl.hidden = false; }
+  }).catch(() => {});
+}
+
+/* ---------- Partage ---------- */
+function toast(msg) {
+  const t = document.getElementById("toast"); t.textContent = msg; t.classList.add("show");
+  clearTimeout(toast.timer); toast.timer = setTimeout(() => t.classList.remove("show"), 2600);
+}
+async function shareOrCopy(text, url, file) {
+  if (navigator.share) {
+    const data = { title: "Sudoku", text, url };
+    if (file && navigator.canShare && navigator.canShare({ files: [file] })) data.files = [file];
+    try { await navigator.share(data); return; }
+    catch (e) {
+      if (e.name === "AbortError") return;
+      if (data.files) { try { delete data.files; await navigator.share(data); return; } catch (e2) { if (e2.name === "AbortError") return; } }
+    }
+  }
+  const full = url ? `${text}\n${url}` : text;
+  try { await navigator.clipboard.writeText(full); toast("Copié ! Colle-le où tu veux."); }
+  catch (e) { window.prompt("Copie ce texte :", full); }
+}
+function shareWin() {
+  const n = (x, w) => `${x} ${w}${x > 1 ? "s" : ""}`;
+  let text = `J'ai fini un sudoku ${DIFFS[G.key].name} en ${fmt(G.time)} (${n(G.errors, "erreur")}, ${n(G.hints, "aide")}).`;
+  if (G.seed) text += ` Tu fais mieux ? Code de la grille : ${G.seed}`;
+  shareOrCopy(text, G.seed ? shareUrl(G.seed) : location.origin + location.pathname, winFile);
+}
+function shareGrid() {
+  shareOrCopy(`Essaie ce sudoku ${DIFFS[G.key].name} ! Code de la grille : ${G.seed}`, shareUrl(G.seed), null);
+}
+// Image de résultat dessinée à la main (pas de capture d'écran possible côté navigateur)
+async function resultCard() {
+  try { await document.fonts.ready; } catch (e) {}
+  const css = getComputedStyle(document.documentElement), v = n => css.getPropertyValue(n).trim();
+  const W = 1080, H = 1350, cv = document.createElement("canvas"); cv.width = W; cv.height = H;
+  const x = cv.getContext("2d");
+  x.fillStyle = v("--bg"); x.fillRect(0, 0, W, H);
+  x.textAlign = "center"; x.textBaseline = "alphabetic";
+  x.fillStyle = v("--muted"); x.font = `600 40px Figtree, sans-serif`;
+  x.fillText(`Sudoku · ${DIFFS[G.key].name}`, W / 2, 110);
+  x.fillStyle = v("--text"); x.font = `600 120px Fraunces, Georgia, serif`;
+  x.fillText(fmt(G.time), W / 2, 240);
+  x.fillStyle = v("--muted"); x.font = `500 36px Figtree, sans-serif`;
+  x.fillText(`${G.errors} erreur${G.errors > 1 ? "s" : ""} · ${G.hints} aide${G.hints > 1 ? "s" : ""}`, W / 2, 300);
+  const S = 840, ox = (W - S) / 2, oy = 360, c = S / 9;
+  x.fillStyle = v("--surface"); x.beginPath(); x.roundRect ? x.roundRect(ox, oy, S, S, 24) : x.rect(ox, oy, S, S); x.fill();
+  x.textBaseline = "middle";
+  for (let i = 0; i < 81; i++) {
+    const cx = ox + C(i) * c + c / 2, cy = oy + R(i) * c + c / 2;
+    if (G.puzzle[i]) { x.fillStyle = v("--ink"); x.font = `600 ${c * 0.6}px Fraunces, Georgia, serif`; x.fillText(G.values[i], cx, cy + 2); }
+    else { x.fillStyle = v("--digit"); x.font = `700 ${c * 0.6}px Kalam, Figtree, cursive`; x.fillText(G.values[i], cx, cy + 8); }
+  }
+  for (let k = 1; k < 9; k++) {
+    const thick = k % 3 === 0; x.strokeStyle = v(thick ? "--line-strong" : "--line"); x.lineWidth = thick ? 5 : 2;
+    x.beginPath(); x.moveTo(ox + k * c, oy); x.lineTo(ox + k * c, oy + S); x.moveTo(ox, oy + k * c); x.lineTo(ox + S, oy + k * c); x.stroke();
+  }
+  x.strokeStyle = v("--line-strong"); x.lineWidth = 6; x.beginPath(); x.roundRect ? x.roundRect(ox, oy, S, S, 24) : x.rect(ox, oy, S, S); x.stroke();
+  x.textBaseline = "alphabetic";
+  if (G.seed) { x.fillStyle = v("--text"); x.font = `600 44px ui-monospace, Menlo, monospace`; x.fillText(`Code ${G.seed}`, W / 2, oy + S + 80); }
+  x.fillStyle = v("--muted"); x.font = `500 30px Figtree, sans-serif`;
+  x.fillText(location.host + location.pathname.replace(/index\.html$/, ""), W / 2, oy + S + 130);
+  return new Promise(res => cv.toBlob(res, "image/png"));
 }
 function showLost() {
   openSheet(`<h2>3 erreurs</h2><p class="sub">La partie est terminée.</p>
@@ -885,6 +1012,11 @@ sheet.addEventListener("click", e => {
   const act = a.dataset.act;
   if (act === "closeSheet") closeSheet();
   else if (act === "new") showNewGame(!!G && !G.done && !G.lost);
+  else if (act === "code") showCodeEntry();
+  else if (act === "playCode") playCodeInput();
+  else if (act === "shareWin") shareWin();
+  else if (act === "shareGrid") shareGrid();
+  else if (act === "keepGame") closeSheet();
   else if (act === "restart") { G.values = G.puzzle.slice(); G.notes = new Array(81).fill(0); G.errors = 0; G.time = 0; G.done = false; G.lost = false; history = []; clearHint(); save(); closeSheet(); render(); }
   else if (act === "check") { const w = []; for (let i = 0; i < 81; i++) if (G.values[i] && G.values[i] !== G.solution[i]) w.push(i); closeSheet(); hint = w.length ? { type: "error", cells: w } : null; hintLevel = 1; if (hint) renderHint(); else { const el = document.getElementById("hint"); el.innerHTML = `<h2><span class="dot"></span>Tout est bon</h2><p>Aucune erreur pour l'instant, continue comme ça.</p><div class="actions"><button class="pill" data-act="close">Fermer</button></div>`; el.classList.add("open"); } render(); }
   else if (act === "settings") showSettings();
@@ -910,10 +1042,16 @@ sheet.addEventListener("change", e => {
 async function startNew(key) {
   openSheet(`<h2>${DIFFS[key].name}</h2><div class="loading"><span class="spin"></span>Je prépare une grille qui demande les bonnes techniques…</div>`, false);
   await new Promise(r => setTimeout(r, 30));
-  const g = await generate(key);
-  if (G && !G.done && !G.lost) { const s0 = stats[G.key] || { played: 0, won: 0, best: null }; stats[G.key] = s0; }
+  beginGame(key, await generate(key));
+}
+async function startFromCode(code, key) {
+  openSheet(`<h2>${DIFFS[key].name}</h2><div class="loading"><span class="spin"></span>Je prépare la grille ${code}…</div>`, false);
+  await new Promise(r => setTimeout(r, 30));
+  beginGame(key, Object.assign(puzzleFromCode(code, key), { code }));
+}
+function beginGame(key, g) {
   const st = stats[key] || { played: 0, won: 0, best: null }; st.played++; stats[key] = st; store.set("sdk-stats", stats);
-  G = { key, puzzle: g.puzzle, solution: g.solution, values: g.puzzle.slice(), notes: new Array(81).fill(0), errors: 0, hints: 0, time: 0, done: false, lost: false };
+  G = { key, seed: g.code, puzzle: g.puzzle, solution: g.solution, values: g.puzzle.slice(), notes: new Array(81).fill(0), errors: 0, hints: 0, time: 0, done: false, lost: false };
   history = []; noteMode = false; paused = false; clearHint();
   selected = g.puzzle.findIndex(x => !x);
   save(); closeSheet(); render();
@@ -959,8 +1097,20 @@ document.addEventListener("keydown", e => {
 applyTheme(); renderFoot();
 (function boot() {
   const saved = store.get("sdk-game", null);
-  if (saved && saved.puzzle && !saved.done && DIFFS[saved.key]) { G = saved; selected = G.values.findIndex(x => !x); if (selected < 0) selected = 0; render(); }
-  else showNewGame(false);
+  const resumable = saved && saved.puzzle && !saved.done && DIFFS[saved.key];
+  if (resumable) { G = saved; selected = G.values.findIndex(x => !x); if (selected < 0) selected = 0; render(); }
+  // Lien partagé : ?g=E-7KQ2MXP
+  const params = new URLSearchParams(location.search), shared = parseCode(params.get("g"));
+  if (params.has("g")) window.history.replaceState(null, "", location.pathname + location.hash);
+  if (shared && !(resumable && G.seed === shared.code)) {
+    const inProgress = resumable && !G.lost && G.values.some((x, i) => x && !G.puzzle[i]);
+    if (!inProgress) { startFromCode(shared.code, shared.key); return; }
+    openSheet(`<h2>Grille partagée</h2><p class="sub">On t'a envoyé la grille ${DIFFS[shared.key].name} <b>${shared.code}</b>. Ta partie en cours sera remplacée.</p>
+      <div class="menu"><button data-act="playShared">Jouer la grille partagée</button><button data-act="keepGame">Garder ma partie</button></div>`, false);
+    sheet.querySelector("[data-act=playShared]").addEventListener("click", () => startFromCode(shared.code, shared.key));
+    return;
+  }
+  if (!resumable) showNewGame(false);
 })();
 </script>
 </body>
