@@ -15,6 +15,7 @@ Les réglages, les stats et la partie en cours sont gardés dans le `localStorag
 ## Codes de grille et partage
 
 - Chaque grille a un **code** (ex. `E-7KQ2MXP`) : la lettre donne la difficulté, le reste est la seed. Le même code redonne toujours exactement la même grille.
+- Le code est affiché sous le nom du niveau pendant toute la partie ; appuyer dessus l'envoie (comme **Menu → Défier un ami**).
 - **Menu → Défier un ami** envoie le code et un lien `?g=CODE` qui ouvre directement cette grille.
 - **Menu → Jouer avec un code** (ou « J'ai un code de grille » au choix de la difficulté) pour saisir un code reçu.
 - En fin de partie, **Partager** envoie le temps, la difficulté, le code et une image de la grille terminée (sur mobile, via le menu de partage du téléphone ; sur ordinateur, le texte est copié et l'image peut être téléchargée).
