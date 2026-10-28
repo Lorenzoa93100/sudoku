@@ -1,0 +1,3 @@
+# GitHub Pages : les outils de développement et de test ne sont pas publiés.
+exclude:
+  - dev

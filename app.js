@@ -1,0 +1,874 @@
+"use strict";
+/* ---------- Constantes et outils ---------- */
+const R = i => (i / 9) | 0, C = i => i % 9, B = i => ((R(i) / 3) | 0) * 3 + ((C(i) / 3) | 0);
+const UNITS = [];
+for (let r = 0; r < 9; r++) UNITS.push([...Array(9)].map((_, c) => r * 9 + c));
+for (let c = 0; c < 9; c++) UNITS.push([...Array(9)].map((_, r) => r * 9 + c));
+for (let b = 0; b < 9; b++) { const br = ((b / 3) | 0) * 3, bc = (b % 3) * 3; const u = []; for (let k = 0; k < 9; k++) u.push((br + ((k / 3) | 0)) * 9 + bc + (k % 3)); UNITS.push(u); }
+const CELL_UNITS = [...Array(81)].map((_, i) => [R(i), 9 + C(i), 18 + B(i)]);
+const PEERS = [...Array(81)].map((_, i) => { const s = new Set(); CELL_UNITS[i].forEach(u => UNITS[u].forEach(j => { if (j !== i) s.add(j); })); return [...s]; });
+const ALL = 0x3FE;
+const bit = d => 1 << d;
+const pop = m => { let n = 0; while (m) { m &= m - 1; n++; } return n; };
+const digitsOf = m => { const a = []; for (let d = 1; d <= 9; d++) if (m & bit(d)) a.push(d); return a; };
+// Générateur aléatoire remplaçable : une seed donne toujours la même grille
+let rand = Math.random;
+function mulberry32(a) { return () => { a = (a + 0x6D2B79F5) | 0; let t = Math.imul(a ^ (a >>> 15), 1 | a); t = (t + Math.imul(t ^ (t >>> 7), 61 | t)) ^ t; return ((t ^ (t >>> 14)) >>> 0) / 4294967296; }; }
+function hashStr(str) { let h = 2166136261; for (let k = 0; k < str.length; k++) { h ^= str.charCodeAt(k); h = Math.imul(h, 16777619); } return h >>> 0; }
+const shuffle = a => { for (let i = a.length - 1; i > 0; i--) { const j = (rand() * (i + 1)) | 0; [a[i], a[j]] = [a[j], a[i]]; } return a; };
+const BOX_NAMES = ["en haut à gauche", "en haut au milieu", "en haut à droite", "du milieu à gauche", "du centre", "du milieu à droite", "en bas à gauche", "en bas au milieu", "en bas à droite"];
+const unitName = u => u < 9 ? `la ligne ${u + 1}` : u < 18 ? `la colonne ${u - 8}` : `le bloc ${BOX_NAMES[u - 18]}`;
+const cellName = i => `L${R(i) + 1}C${C(i) + 1}`;
+
+/* ---------- Solveur par force brute (unicité, génération) ---------- */
+function solveCount(grid, limit, randomize, out) {
+  const a = grid.slice(); const rows = new Array(9).fill(0), cols = new Array(9).fill(0), boxes = new Array(9).fill(0);
+  for (let i = 0; i < 81; i++) if (a[i]) { const b = bit(a[i]); if ((rows[R(i)] | cols[C(i)] | boxes[B(i)]) & b) return 0; rows[R(i)] |= b; cols[C(i)] |= b; boxes[B(i)] |= b; }
+  let count = 0;
+  function rec() {
+    let best = -1, bm = 0, bc = 10;
+    for (let i = 0; i < 81; i++) if (!a[i]) {
+      const m = ~(rows[R(i)] | cols[C(i)] | boxes[B(i)]) & ALL; const c = pop(m);
+      if (c === 0) return false;
+      if (c < bc) { bc = c; best = i; bm = m; if (c === 1) break; }
+    }
+    if (best < 0) { count++; if (out && count === 1) out.push(...a); return count >= limit; }
+    const ds = digitsOf(bm); if (randomize) shuffle(ds);
+    const r = R(best), c = C(best), b = B(best);
+    for (const d of ds) {
+      const x = bit(d); a[best] = d; rows[r] |= x; cols[c] |= x; boxes[b] |= x;
+      if (rec()) return true;
+      a[best] = 0; rows[r] &= ~x; cols[c] &= ~x; boxes[b] &= ~x;
+    }
+    return false;
+  }
+  rec(); return count;
+}
+function fullGrid() { const out = []; solveCount(new Array(81).fill(0), 1, true, out); return out; }
+
+/* ---------- Moteur logique (aides + niveau de difficulté) ---------- */
+function makeState(values) {
+  const v = values.slice(), c = new Array(81).fill(0);
+  for (let i = 0; i < 81; i++) if (!v[i]) { let m = ALL; for (const p of PEERS[i]) if (v[p]) m &= ~bit(v[p]); c[i] = m; }
+  return { v, c };
+}
+const cloneState = s => ({ v: s.v.slice(), c: s.c.slice() });
+function place(s, i, d) { s.v[i] = d; s.c[i] = 0; const b = ~bit(d); for (const p of PEERS[i]) s.c[p] &= b; }
+function positions(s, u, d) { const out = []; for (const j of UNITS[u]) if (!s.v[j] && (s.c[j] & bit(d))) out.push(j); return out; }
+function unitHas(s, u, d) { for (const j of UNITS[u]) if (s.v[j] === d) return true; return false; }
+
+function findHiddenSingle(s, unitList) {
+  for (const u of unitList) for (let d = 1; d <= 9; d++) {
+    if (unitHas(s, u, d)) continue;
+    const p = positions(s, u, d);
+    if (p.length === 1) return { u, i: p[0], d };
+  }
+  return null;
+}
+function findNakedSingle(s) { for (let i = 0; i < 81; i++) if (!s.v[i] && pop(s.c[i]) === 1) return { i, d: digitsOf(s.c[i])[0] }; return null; }
+
+const TECH = {
+  hiddenBox: "Seule place dans le bloc", hiddenLine: "Seule place sur la ligne", nakedSingle: "Dernier chiffre possible",
+  pointing: "Chiffre coincé dans un bloc", claiming: "Chiffre coincé sur une ligne", nakedPair: "Paire de cases",
+  hiddenPair: "Paire cachée", nakedTriple: "Trio de cases", xwing: "X-Wing", forcing: "Raisonnement par l'absurde"
+};
+
+function stepHiddenSingle(s, boxesOnly) {
+  const list = boxesOnly ? [...Array(9)].map((_, k) => 18 + k) : [...Array(18).keys()];
+  const h = findHiddenSingle(s, list); if (!h) return null;
+  const { u, i, d } = h;
+  const isBox = u >= 18;
+  return {
+    kind: "place", level: 1, tech: isBox ? "hiddenBox" : "hiddenLine", i, d, zone: UNITS[u], cells: [i],
+    short: `Regarde ${unitName(u)}. Où peut aller le ${d} ?`,
+    text: [`Dans ${unitName(u)}, il manque un ${d}. Toutes les autres cases vides sont bloquées : elles voient déjà un ${d} sur leur ligne, leur colonne ou leur bloc (ou il est rayé de leurs possibilités).`,
+           `Il ne reste qu'une seule case : ${cellName(i)}. Le ${d} va là.`]
+  };
+}
+function stepNakedSingle(s) {
+  const n = findNakedSingle(s); if (!n) return null;
+  const { i, d } = n;
+  return {
+    kind: "place", level: 1, tech: "nakedSingle", i, d, zone: [i], cells: [i],
+    short: `Regarde la case ${cellName(i)} (surlignée). Quels chiffres peut-elle encore recevoir ?`,
+    text: [`La case ${cellName(i)} ne peut plus recevoir que le ${d} : tous les autres chiffres sont déjà dans sa ligne, sa colonne ou son bloc, ou ont été éliminés.`,
+           `Donc c'est un ${d}.`]
+  };
+}
+function stepPointing(s) {
+  for (let b = 18; b < 27; b++) for (let d = 1; d <= 9; d++) {
+    const p = positions(s, b, d); if (p.length < 2) continue;
+    for (const [kind, key, base] of [["row", R, 0], ["col", C, 9]]) {
+      if (p.every(j => key(j) === key(p[0]))) {
+        const line = base + key(p[0]);
+        const el = positions(s, line, d).filter(j => !p.includes(j));
+        if (el.length) return {
+          kind: "elim", level: 2, tech: "pointing", elims: el.map(j => [j, d]), zone: UNITS[b], cells: p,
+          short: `Regarde où peut aller le ${d} dans ${unitName(b)}.`,
+          text: [`Dans ${unitName(b)}, le ${d} ne peut aller que dans les cases surlignées, qui sont toutes sur ${unitName(line)}.`,
+                 `Donc le ${d} de ${unitName(line)} est forcément dans ce bloc. On peut l'enlever des autres cases de ${unitName(line)} (en rouge).`]
+        };
+      }
+    }
+  }
+  for (let u = 0; u < 18; u++) for (let d = 1; d <= 9; d++) {
+    const p = positions(s, u, d); if (p.length < 2) continue;
+    if (p.every(j => B(j) === B(p[0]))) {
+      const bx = 18 + B(p[0]);
+      const el = positions(s, bx, d).filter(j => !p.includes(j));
+      if (el.length) return {
+        kind: "elim", level: 2, tech: "claiming", elims: el.map(j => [j, d]), zone: UNITS[u], cells: p,
+        short: `Regarde où peut aller le ${d} sur ${unitName(u)}.`,
+        text: [`Sur ${unitName(u)}, le ${d} ne peut aller que dans les cases surlignées, qui sont toutes dans ${unitName(bx)}.`,
+               `Donc le ${d} de ce bloc est forcément sur ${unitName(u)}. On l'enlève des autres cases du bloc (en rouge).`]
+      };
+    }
+  }
+  return null;
+}
+function combos(arr, k) { const out = []; const rec = (st, acc) => { if (acc.length === k) { out.push(acc.slice()); return; } for (let x = st; x < arr.length; x++) { acc.push(arr[x]); rec(x + 1, acc); acc.pop(); } }; rec(0, []); return out; }
+function stepNakedSubset(s, k) {
+  for (let u = 0; u < 27; u++) {
+    const empt = UNITS[u].filter(j => !s.v[j] && pop(s.c[j]) <= k && pop(s.c[j]) >= 2);
+    if (empt.length < k) continue;
+    for (const t of combos(empt, k)) {
+      const m = t.reduce((a, j) => a | s.c[j], 0); if (pop(m) !== k) continue;
+      const el = []; for (const j of UNITS[u]) if (!s.v[j] && !t.includes(j) && (s.c[j] & m)) for (const d of digitsOf(s.c[j] & m)) el.push([j, d]);
+      if (el.length) {
+        const ds = digitsOf(m).join(k === 2 ? " et " : ", ");
+        return {
+          kind: "elim", level: k === 2 ? 3 : 4, tech: k === 2 ? "nakedPair" : "nakedTriple", elims: el, zone: UNITS[u], cells: t,
+          short: `Dans ${unitName(u)}, cherche ${k === 2 ? "deux cases qui ont exactement les deux mêmes" : "trois cases qui se partagent les trois mêmes"} chiffres possibles.`,
+          text: [`Dans ${unitName(u)}, les cases surlignées ne peuvent contenir que ${ds}.`,
+                 `${k === 2 ? "Ces deux cases vont forcément prendre ces deux chiffres" : "Ces trois cases vont forcément prendre ces trois chiffres"}, donc aucune autre case de ${unitName(u)} ne peut les avoir. On les enlève ailleurs (en rouge).`]
+        };
+      }
+    }
+  }
+  return null;
+}
+function stepHiddenPair(s) {
+  for (let u = 0; u < 27; u++) {
+    const pos = {}; for (let d = 1; d <= 9; d++) if (!unitHas(s, u, d)) pos[d] = positions(s, u, d);
+    const ds = Object.keys(pos).map(Number).filter(d => pos[d].length === 2);
+    for (const [a, b] of combos(ds, 2)) {
+      if (pos[a][0] !== pos[b][0] || pos[a][1] !== pos[b][1]) continue;
+      const keep = bit(a) | bit(b); const el = [];
+      for (const j of pos[a]) for (const d of digitsOf(s.c[j] & ~keep)) el.push([j, d]);
+      if (el.length) return {
+        kind: "elim", level: 3, tech: "hiddenPair", elims: el, zone: UNITS[u], cells: pos[a],
+        short: `Dans ${unitName(u)}, regarde où peuvent aller le ${a} et le ${b}.`,
+        text: [`Dans ${unitName(u)}, le ${a} et le ${b} ne peuvent aller que dans les deux mêmes cases (surlignées).`,
+               `Ces deux cases sont donc réservées au ${a} et au ${b} : on enlève tous leurs autres chiffres possibles.`]
+      };
+    }
+  }
+  return null;
+}
+function stepXWing(s) {
+  for (const [base, other, key, okey, lbl] of [[0, 9, R, C, "lignes"], [9, 0, C, R, "colonnes"]]) {
+    for (let d = 1; d <= 9; d++) {
+      const lines = [];
+      for (let L = 0; L < 9; L++) { const p = positions(s, base + L, d); if (p.length === 2 && !unitHas(s, base + L, d)) lines.push([L, p]); }
+      for (const [[L1, p1], [L2, p2]] of combos(lines, 2)) {
+        const k1 = p1.map(okey), k2 = p2.map(okey);
+        if (k1[0] !== k2[0] || k1[1] !== k2[1]) continue;
+        const el = [];
+        for (const k of k1) for (const j of positions(s, other + k, d)) if (key(j) !== L1 && key(j) !== L2) el.push([j, d]);
+        if (el.length) {
+          const olbl = lbl === "lignes" ? "colonnes" : "lignes";
+          return {
+            kind: "elim", level: 4, tech: "xwing", elims: el, zone: [...UNITS[base + L1], ...UNITS[base + L2]], cells: [...p1, ...p2],
+            short: `Regarde où peut aller le ${d} sur les ${lbl} ${L1 + 1} et ${L2 + 1}.`,
+            text: [`Sur les ${lbl} ${L1 + 1} et ${L2 + 1}, le ${d} n'a que 2 places chacune, et ce sont les mêmes ${olbl} (${k1[0] + 1} et ${k1[1] + 1}). Ça forme un rectangle.`,
+                   `Quoi qu'il arrive, les deux ${d} seront dans deux coins opposés du rectangle. Donc dans ces ${olbl}, le ${d} est déjà pris : on l'enlève des autres cases (en rouge).`]
+          };
+        }
+      }
+    }
+  }
+  return null;
+}
+function propagate(s0, i, d) {
+  const s = cloneState(s0); place(s, i, d); const chain = [];
+  for (let guard = 0; guard < 81; guard++) {
+    for (let j = 0; j < 81; j++) if (!s.v[j] && s.c[j] === 0) return { bad: `la case ${cellName(j)} n'a plus aucun chiffre possible`, chain, badCells: [j] };
+    for (let u = 0; u < 27; u++) for (let x = 1; x <= 9; x++) if (!unitHas(s, u, x) && positions(s, u, x).length === 0) return { bad: `le ${x} n'a plus aucune place dans ${unitName(u)}`, chain, badCells: UNITS[u] };
+    const n = findNakedSingle(s);
+    if (n) { chain.push({ i: n.i, d: n.d, why: `c'est son seul chiffre possible` }); place(s, n.i, n.d); continue; }
+    const h = findHiddenSingle(s, [...Array(27).keys()]);
+    if (h) { chain.push({ i: h.i, d: h.d, why: `c'est la seule place du ${h.d} dans ${unitName(h.u)}` }); place(s, h.i, h.d); continue; }
+    return null;
+  }
+  return null;
+}
+function stepForcing(s) {
+  const tests = [];
+  for (let i = 0; i < 81; i++) if (!s.v[i] && pop(s.c[i]) === 2) for (const d of digitsOf(s.c[i])) tests.push({ i, d });
+  for (let u = 0; u < 27; u++) for (let d = 1; d <= 9; d++) { if (unitHas(s, u, d)) continue; const p = positions(s, u, d); if (p.length === 2) for (const i of p) tests.push({ i, d }); }
+  let best = null;
+  for (const t of tests) {
+    const r = propagate(s, t.i, t.d);
+    if (r && (!best || r.chain.length < best.r.chain.length)) { best = { t, r }; if (r.chain.length <= 2) break; }
+  }
+  if (!best) return null;
+  const { t, r } = best; const shown = r.chain.slice(0, 7);
+  const lines = shown.map(x => `alors ${cellName(x.i)} = ${x.d} (${x.why})`);
+  if (r.chain.length > shown.length) lines.push(`… et ${r.chain.length - shown.length} autre(s) case(s) en cascade`);
+  return {
+    kind: "elim", level: 5, tech: "forcing", elims: [[t.i, t.d]], zone: [t.i], cells: [t.i], chain: r.chain.map(x => x.i), bad: r.badCells,
+    short: `Aucune technique simple ici. Teste une hypothèse : et si la case ${cellName(t.i)} était un ${t.d} ?`,
+    text: [`On fait semblant de mettre un ${t.d} en ${cellName(t.i)} et on suit les conséquences comme des dominos :`],
+    list: lines,
+    after: `Blocage : ${r.bad}. C'est impossible, donc ${cellName(t.i)} n'est pas un ${t.d}.`
+  };
+}
+function nextStep(s) {
+  return stepHiddenSingle(s, true) || stepHiddenSingle(s, false) || stepNakedSingle(s) || stepPointing(s) ||
+    stepNakedSubset(s, 2) || stepHiddenPair(s) || stepNakedSubset(s, 3) || stepXWing(s) || stepForcing(s);
+}
+function applyStep(s, st) { if (st.kind === "place") place(s, st.i, st.d); else for (const [j, d] of st.elims) s.c[j] &= ~bit(d); }
+function grade(puzzle) {
+  const s = makeState(puzzle); let max = 0;
+  for (let guard = 0; guard < 400; guard++) {
+    if (s.v.every(x => x)) return max;
+    const st = nextStep(s); if (!st) return 99;
+    max = Math.max(max, st.level); applyStep(s, st);
+  }
+  return 99;
+}
+
+/* ---------- Génération par difficulté ---------- */
+const DIFFS = {
+  facile:    { name: "Facile",    min: 38, ok: l => l <= 1, want: 1, desc: "Beaucoup d'indices, techniques de base" },
+  moyen:     { name: "Moyen",     min: 30, ok: l => l <= 1, want: 1, desc: "Moins d'indices, il faut bien balayer" },
+  difficile: { name: "Difficile", min: 26, ok: l => l === 2, want: 2, desc: "Il faut repérer les chiffres coincés" },
+  expert:    { name: "Expert",    min: 22, ok: l => l === 3 || l === 4, want: 3.5, desc: "Paires, trios ou X-Wing nécessaires" },
+  extreme:   { name: "Extrême",   min: 17, ok: l => l >= 5, want: 5, desc: "Raisonnement par l'absurde obligatoire" }
+};
+function carve(sol, min) {
+  const p = sol.slice(); let givens = 81;
+  const order = shuffle([...Array(41).keys()]);
+  for (const i of order) {
+    if (givens <= min) break;
+    const j = 80 - i; const a = p[i], b = p[j];
+    p[i] = 0; p[j] = 0;
+    if (solveCount(p, 2) !== 1) { p[i] = a; p[j] = b; } else givens -= (i === j ? 1 : 2);
+  }
+  return p;
+}
+/* ---------- Codes de grille (seed) ---------- */
+// Code = lettre de difficulté + 7 caractères, ex. « E-7KQ2MXP ». Sans 0/O, 1/I/L pour éviter les confusions.
+const SEED_ABC = "23456789ABCDEFGHJKMNPQRSTUVWXYZ";
+const DIFF_LETTER = { facile: "F", moyen: "M", difficile: "D", expert: "E", extreme: "X" };
+function randomCode(key) { const a = new Uint32Array(7); crypto.getRandomValues(a); return DIFF_LETTER[key] + "-" + [...a].map(x => SEED_ABC[x % SEED_ABC.length]).join(""); }
+function parseCode(str) {
+  const s = String(str || "").toUpperCase().replace(/[^0-9A-Z]/g, "");
+  if (s.length !== 8) return null;
+  const key = Object.keys(DIFF_LETTER).find(k => DIFF_LETTER[k] === s[0]);
+  if (!key || [...s.slice(1)].some(c => !SEED_ABC.includes(c))) return null;
+  return { key, code: s[0] + "-" + s.slice(1) };
+}
+function puzzleFromCode(code, key) {
+  rand = mulberry32(hashStr(code));
+  try { const sol = fullGrid(); return { puzzle: carve(sol, DIFFS[key].min), solution: sol }; }
+  finally { rand = Math.random; }
+}
+function shareUrl(code) { return location.origin + location.pathname + "?g=" + code; }
+
+async function generate(key) {
+  const cfg = DIFFS[key]; const t0 = performance.now(); const budget = key === "extreme" || key === "expert" ? 9000 : 3000;
+  let best = null;
+  // Chaque essai a sa propre seed : on garde celle qui donne le bon niveau, elle suffit à recréer la grille
+  while (performance.now() - t0 < budget) {
+    const code = randomCode(key); const { puzzle: p, solution: sol } = puzzleFromCode(code, key); const lvl = grade(p);
+    if (cfg.ok(lvl) && lvl !== 99) return { puzzle: p, solution: sol, level: lvl, code };
+    const score = Math.abs((lvl === 99 ? 6 : lvl) - cfg.want) + (lvl === 99 ? 0.5 : 0);
+    if (!best || score < best.score) best = { puzzle: p, solution: sol, level: lvl, score, code };
+    await new Promise(r => setTimeout(r, 0));
+  }
+  return best;
+}
+
+/* ---------- Réglages, stockage ---------- */
+const store = {
+  get(k, def) { try { const v = localStorage.getItem(k); return v ? JSON.parse(v) : def; } catch (e) { return def; } },
+  set(k, v) { try { localStorage.setItem(k, JSON.stringify(v)); } catch (e) {} }
+};
+const DEFAULT_SETTINGS = { errorLimit: true, autoCheck: true, autoRemoveNotes: true, hlPeers: true, hlSame: true, hideDone: true, showTimer: true, coords: true, noPencil: false, theme: "auto", digitColor: "theme", digitCustom: "#E0457B", pencilKey: "n" };
+let settings = Object.assign({}, DEFAULT_SETTINGS, store.get("sdk-settings", {}));
+let stats = store.get("sdk-stats", {});
+
+/* ---------- Thèmes et couleur des chiffres ---------- */
+// prev : [fond, surface, accent] pour l'aperçu ; dark : null = suit le système
+const THEMES = {
+  auto:      { name: "Auto",      dark: null,  prev: ["#EEF1F5", "#1B212C", "#2F5FD0"] },
+  light:     { name: "Clair",     dark: false, prev: ["#EEF1F5", "#FFFFFF", "#2F5FD0"] },
+  dark:      { name: "Sombre",    dark: true,  prev: ["#12161E", "#1B212C", "#7FAEFF"] },
+  papier:    { name: "Papier",    dark: false, prev: ["#F3EDE2", "#FFFBF3", "#8A4B1F"] },
+  menthe:    { name: "Menthe",    dark: false, prev: ["#EAF3EE", "#FFFFFF", "#1E7A55"] },
+  lavande:   { name: "Lavande",   dark: false, prev: ["#F1EEF8", "#FFFFFF", "#6A48C9"] },
+  sakura:    { name: "Sakura",    dark: false, prev: ["#FAF0F2", "#FFFFFF", "#B23A7C"] },
+  contraste: { name: "Contraste", dark: false, prev: ["#FFFFFF", "#FFFFFF", "#0038A8"] },
+  ocean:     { name: "Océan",     dark: true,  prev: ["#0C1B24", "#122833", "#4FD1E0"] },
+  foret:     { name: "Forêt",     dark: true,  prev: ["#111A14", "#18241C", "#7ED69A"] },
+  minuit:    { name: "Minuit",    dark: true,  prev: ["#14111F", "#1C1829", "#B69CFF"] }
+};
+// Pas de rouge : il est réservé aux erreurs. l = sur fond clair, d = sur fond sombre.
+const DIGIT_COLORS = {
+  theme:     { name: "Couleur du thème" },
+  bleu:      { name: "Bleu",      l: "#2F5FD0", d: "#7FAEFF" },
+  vert:      { name: "Vert",      l: "#1B7F4B", d: "#5BD69A" },
+  turquoise: { name: "Turquoise", l: "#0A7F8C", d: "#4FD6E0" },
+  violet:    { name: "Violet",    l: "#7A3FD0", d: "#B99BFF" },
+  rose:      { name: "Rose",      l: "#C0307A", d: "#FF8FC4" },
+  orange:    { name: "Orange",    l: "#C25E00", d: "#FFA34D" },
+  encre:     { name: "Encre",     l: "#16202E", d: "#F2F5FA" }
+};
+if (!THEMES[settings.theme]) settings.theme = "auto";
+if (settings.digitColor !== "custom" && !DIGIT_COLORS[settings.digitColor]) settings.digitColor = "theme";
+const darkMQ = window.matchMedia("(prefers-color-scheme: dark)");
+function isDark() { const d = THEMES[settings.theme].dark; return d == null ? darkMQ.matches : d; }
+function applyTheme() {
+  const root = document.documentElement;
+  if (settings.theme === "auto") delete root.dataset.theme; else root.dataset.theme = settings.theme;
+  let col = null;
+  if (settings.digitColor === "custom") col = settings.digitCustom;
+  else if (settings.digitColor !== "theme") col = DIGIT_COLORS[settings.digitColor][isDark() ? "d" : "l"];
+  if (col) root.style.setProperty("--digit", col); else root.style.removeProperty("--digit");
+}
+darkMQ.addEventListener("change", () => { applyTheme(); if (overlayOpen() && sheet.querySelector(".swatches")) showSettings(); });
+
+/* ---------- Touche du mode crayon ---------- */
+// Touches déjà prises par le jeu (chiffres, déplacements, aide, pause…)
+const RESERVED_KEYS = new Set(["h", " ", "backspace", "delete", "escape", "tab", "enter", "arrowup", "arrowdown", "arrowleft", "arrowright", "shift", "control", "alt", "altgraph", "meta", "capslock", "dead"]);
+let capturingKey = false;
+function keyLabel(k) { return k.length === 1 ? k.toUpperCase() : k; }
+function renderFoot() {
+  const k = keyLabel(settings.pencilKey);
+  document.getElementById("foot").innerHTML = `Clavier : chiffres, flèches, Suppr, <kbd>${esc(k)}</kbd> pour le mode crayon, <kbd>H</kbd> pour l'aide, <kbd>Espace</kbd> pour la pause, <kbd>Ctrl+Z</kbd> pour annuler.`;
+  document.getElementById("notesBtn").title = `Mode crayon (touche ${k})`;
+}
+
+/* ---------- État de la partie ---------- */
+let G = null; // { key, seed, puzzle, solution, values, notes, errors, hints, time, done, lost }
+let selected = 40, noteMode = false, paused = false, history = [], hint = null, hintLevel = 0;
+
+const boardEl = document.getElementById("board");
+const cells = [];
+(function buildBoard() {
+  for (let i = 0; i < 81; i++) {
+    const b = document.createElement("button");
+    b.className = `cell r${R(i)} c${C(i)}`; b.setAttribute("role", "gridcell"); b.tabIndex = -1;
+    b.addEventListener("click", () => { selected = i; render(); b.focus({ preventScroll: true }); });
+    boardEl.appendChild(b); cells.push(b);
+  }
+  document.getElementById("colnums").innerHTML = [...Array(9)].map((_, k) => `<span>C${k + 1}</span>`).join("");
+  document.getElementById("rownums").innerHTML = [...Array(9)].map((_, k) => `<span>L${k + 1}</span>`).join("");
+  const pad = document.getElementById("pad");
+  for (let d = 1; d <= 9; d++) {
+    const b = document.createElement("button"); b.className = "num"; b.dataset.d = d;
+    b.innerHTML = `<span class="d">${d}</span><span class="left"></span>`; b.setAttribute("aria-label", `Chiffre ${d}`);
+    b.addEventListener("click", () => input(d)); pad.appendChild(b);
+  }
+})();
+
+function save() { if (G) store.set("sdk-game", G); }
+function snapshot() { history.push({ values: G.values.slice(), notes: G.notes.slice(), errors: G.errors }); if (history.length > 300) history.shift(); }
+
+function input(d) {
+  if (!G || G.done || G.lost || paused) return;
+  const i = selected; if (G.puzzle[i]) return;
+  clearHint();
+  if (noteMode && !settings.noPencil) {
+    if (G.values[i]) return;
+    snapshot(); G.notes[i] ^= bit(d);
+  } else {
+    if (G.values[i] === d) return;
+    snapshot();
+    G.values[i] = d; G.notes[i] = 0;
+    const wrong = d !== G.solution[i];
+    if (wrong && settings.autoCheck) { G.errors++; }
+    if (settings.autoRemoveNotes && !(wrong && settings.autoCheck)) for (const p of PEERS[i]) G.notes[p] &= ~bit(d);
+    if (settings.autoCheck && settings.errorLimit && G.errors >= 3) { G.lost = true; save(); render(); showLost(); return; }
+    checkWin();
+  }
+  save(); render();
+}
+function erase() {
+  if (!G || G.done || paused) return; const i = selected; if (G.puzzle[i]) return;
+  if (!G.values[i] && !G.notes[i]) return;
+  clearHint(); snapshot(); G.values[i] = 0; G.notes[i] = 0; save(); render();
+}
+function undo() {
+  if (!G || paused || !history.length) return;
+  const h = history.pop(); G.values = h.values; G.notes = h.notes; if (G.lost) { G.lost = false; } clearHint(); save(); render();
+}
+function autoNotes() {
+  if (!G || G.done || paused || settings.noPencil) return;
+  clearHint(); snapshot();
+  const s = makeState(G.values);
+  for (let i = 0; i < 81; i++) G.notes[i] = G.values[i] ? 0 : s.c[i];
+  save(); render();
+}
+function checkWin() {
+  for (let i = 0; i < 81; i++) if (G.values[i] !== G.solution[i]) return;
+  G.done = true; save();
+  const st = stats[G.key] || { played: 0, won: 0, best: null };
+  st.won++; if (st.best == null || G.time < st.best) st.best = G.time; stats[G.key] = st; store.set("sdk-stats", stats);
+  setTimeout(showWin, 250);
+}
+
+/* ---------- Aides ---------- */
+function clearHint() { hint = null; hintLevel = 0; document.getElementById("hint").classList.remove("open"); }
+function computeHint() {
+  const wrong = []; for (let i = 0; i < 81; i++) if (G.values[i] && G.values[i] !== G.solution[i]) wrong.push(i);
+  if (wrong.length) return { type: "error", cells: wrong };
+  const s = makeState(G.values); const pre = [];
+  for (let k = 0; k < 80; k++) {
+    const st = nextStep(s); if (!st) break;
+    if (st.kind === "place") return { type: "logic", pre, final: st };
+    applyStep(s, st); pre.push(st);
+  }
+  let bi = -1, bc = 10; for (let i = 0; i < 81; i++) if (!G.values[i] && pop(s.c[i]) < bc) { bc = pop(s.c[i]); bi = i; }
+  return { type: "reveal", i: bi, d: G.solution[bi] };
+}
+function askHint() {
+  if (!G || G.done || G.lost || paused) return;
+  if (hint && hintLevel < 2 && hint.type === "logic") { hintLevel++; renderHint(); render(); return; }
+  hint = computeHint(); hintLevel = 1; G.hints++; save(); renderHint(); render();
+  document.getElementById("hint").scrollIntoView({ block: "nearest", behavior: "smooth" });
+}
+function hintHighlights() {
+  const hl = { zone: new Set(), tech: new Set(), elim: new Map(), target: -1, chain: new Set(), err: new Set() };
+  if (!hint) return hl;
+  if (hint.type === "error") { hint.cells.forEach(i => hl.err.add(i)); return hl; }
+  if (hint.type === "reveal") { hl.target = hint.i; return hl; }
+  const first = hint.pre[0] || hint.final;
+  if (hintLevel === 1) { first.zone.forEach(i => hl.zone.add(i)); if (first.tech === "nakedSingle" || first.tech === "forcing") first.cells.forEach(i => hl.tech.add(i)); return hl; }
+  const steps = [...hint.pre, hint.final];
+  for (const st of steps) {
+    if (st.kind === "elim") { st.zone.forEach(i => hl.zone.add(i)); st.cells.forEach(i => hl.tech.add(i)); st.elims.forEach(([j, d]) => { if (!hl.elim.has(j)) hl.elim.set(j, new Set()); hl.elim.get(j).add(d); }); if (st.chain) st.chain.forEach(i => hl.chain.add(i)); }
+  }
+  if (!hint.pre.length) hint.final.zone.forEach(i => hl.zone.add(i));
+  hl.target = hint.final.i;
+  return hl;
+}
+function esc(t) { return String(t).replace(/[&<>]/g, c => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;" }[c])); }
+function renderHint() {
+  const el = document.getElementById("hint");
+  if (!hint) { el.classList.remove("open"); return; }
+  let h = "";
+  if (hint.type === "error") {
+    h = `<h2><span class="dot"></span>Il y a une erreur</h2><p>${hint.cells.length > 1 ? "Les cases entourées en rouge ne sont pas bonnes." : `La case ${cellName(hint.cells[0])}, entourée en rouge, n'est pas bonne.`} Tant qu'elle${hint.cells.length > 1 ? "s restent" : " reste"} là, tout ce que tu déduis ensuite risque d'être faux.</p>
+      <div class="actions"><button class="pill primary" data-act="fixerr">Effacer ${hint.cells.length > 1 ? "les erreurs" : "l'erreur"}</button><button class="pill" data-act="close">Fermer</button></div>`;
+  } else if (hint.type === "reveal") {
+    h = `<h2><span class="dot"></span>Pas de méthode simple</h2><p>Ici, même le raisonnement par l'absurde ne donne rien de court. Je te propose de révéler une case pour débloquer la suite.</p>
+      <div class="actions"><button class="pill primary" data-act="apply">Révéler ${cellName(hint.i)}</button><button class="pill" data-act="close">Fermer</button></div>`;
+  } else {
+    const first = hint.pre[0] || hint.final;
+    if (hintLevel === 1) {
+      h = `<h2><span class="dot"></span>${TECH[first.tech]}</h2><p>${esc(first.short)}</p>
+        <p class="hintnote">La zone à regarder est surlignée en jaune.</p>
+        <div class="actions"><button class="pill primary" data-act="more">Explique-moi</button><button class="pill" data-act="close">Je cherche seul</button></div>`;
+    } else {
+      const steps = [...hint.pre, hint.final];
+      const skip = Math.max(0, steps.length - 4);
+      const shown = steps.slice(skip);
+      h = `<h2><span class="dot"></span>${TECH[shown.length > 1 ? shown[shown.length - 2].tech : first.tech]}</h2>`;
+      if (skip) h += `<p class="hintnote">(${skip} étape(s) de nettoyage avant, non détaillées)</p>`;
+      shown.forEach((st, k) => {
+        if (shown.length > 1) h += `<p><b>${st.kind === "place" ? "Résultat" : `Étape ${k + 1}`} :</b></p>`;
+        h += st.text.map(t => `<p>${esc(t)}</p>`).join("");
+        if (st.list) h += `<ol>${st.list.map(t => `<li>${esc(t)}</li>`).join("")}</ol>`;
+        if (st.after) h += `<p>${esc(st.after)}</p>`;
+      });
+      if (hint.pre.length) h += `<p><b>Donc :</b> ${cellName(hint.final.i)} = ${hint.final.d}.</p>`;
+      h += `<div class="legend"><span><i class="lg-tech"></i>cases qui comptent</span><span><i class="lg-zone"></i>zone</span>${hint.pre.length ? `<span><i class="lg-elim"></i>chiffre qu'on élimine</span>` : ""}<span><i class="lg-target"></i>case à remplir</span></div>`;
+      h += `<div class="actions"><button class="pill primary" data-act="apply">Placer le ${hint.final.d}</button><button class="pill" data-act="close">Je le place moi-même</button></div>`;
+    }
+  }
+  el.innerHTML = h; el.classList.add("open");
+}
+document.getElementById("hint").addEventListener("click", e => {
+  const a = e.target.closest("[data-act]"); if (!a) return;
+  const act = a.dataset.act;
+  if (act === "close") { clearHint(); render(); }
+  else if (act === "more") { hintLevel = 2; renderHint(); render(); }
+  else if (act === "fixerr") { snapshot(); hint.cells.forEach(i => { G.values[i] = 0; }); clearHint(); save(); render(); }
+  else if (act === "apply") {
+    const i = hint.type === "reveal" ? hint.i : hint.final.i, d = hint.type === "reveal" ? hint.d : hint.final.d;
+    selected = i; clearHint(); const wasNote = noteMode; noteMode = false; input(d); noteMode = wasNote; render();
+  }
+});
+
+/* ---------- Affichage ---------- */
+function fmt(t) { const m = Math.floor(t / 60), s = t % 60; const h = Math.floor(m / 60); return (h ? h + ":" + String(m % 60).padStart(2, "0") : String(m).padStart(2, "0")) + ":" + String(s).padStart(2, "0"); }
+function render() {
+  if (!G) return;
+  const hl = hintHighlights();
+  const selVal = G.values[selected];
+  const counts = new Array(10).fill(0);
+  for (let i = 0; i < 81; i++) if (G.values[i] && (G.values[i] === G.solution[i] || !settings.autoCheck)) counts[G.values[i]]++;
+  let filled = 0;
+  for (let i = 0; i < 81; i++) {
+    const el = cells[i], v = G.values[i], given = !!G.puzzle[i];
+    if (v) filled++;
+    const cls = [`cell`, `r${R(i)}`, `c${C(i)}`, given ? "given" : v ? "user" : "empty"];
+    const isPeer = R(i) === R(selected) || C(i) === C(selected) || B(i) === B(selected);
+    if (settings.hlPeers && isPeer && i !== selected) cls.push("peer");
+    if (settings.hlSame && selVal && v === selVal && i !== selected) cls.push("same");
+    if (i === selected) cls.push("sel");
+    if (v && !given && v !== G.solution[i] && settings.autoCheck) cls.push("wrong");
+    if (hl.zone.has(i)) cls.push("zone");
+    if (hl.tech.has(i)) cls.push("tech");
+    if (hl.elim.has(i)) cls.push("elim");
+    if (hl.chain.has(i) && !hl.tech.has(i)) cls.push("chain");
+    if (hl.err.has(i)) cls.push("errmark");
+    if (i === hl.target) cls.push("target");
+    el.className = cls.join(" ");
+    let aria = `${cellName(i)}, `;
+    if (v) { el.innerHTML = `<span class="val">${v}</span>`; aria += `${v}`; }
+    else {
+      const showNotes = !settings.noPencil;
+      const m = showNotes ? G.notes[i] : 0; const cut = hl.elim.get(i);
+      if (m || cut) {
+        let h = `<span class="notes">`;
+        for (let d = 1; d <= 9; d++) {
+          const has = m & bit(d), isCut = cut && cut.has(d);
+          h += `<span class="${isCut ? "cut" : (has && selVal === d && settings.hlSame ? "hot" : "")}">${has || isCut ? d : ""}</span>`;
+        }
+        el.innerHTML = h + `</span>`; aria += `notes ${digitsOf(m).join(" ")}`;
+      } else { el.innerHTML = ""; aria += "vide"; }
+    }
+    el.setAttribute("aria-label", aria);
+    el.tabIndex = i === selected ? 0 : -1;
+  }
+  document.querySelectorAll(".num").forEach(b => {
+    const d = +b.dataset.d, left = 9 - counts[d];
+    b.querySelector(".left").textContent = left;
+    b.classList.toggle("done", left <= 0 && !settings.hideDone);
+    b.classList.toggle("hidden", left <= 0 && settings.hideDone);
+  });
+  document.getElementById("pad").classList.toggle("notesmode", noteMode && !settings.noPencil);
+  document.getElementById("errors").textContent = settings.autoCheck ? (settings.errorLimit ? `${G.errors}/3` : `${G.errors}`) : "—";
+  document.getElementById("errors").classList.toggle("bad", G.errors > 0 && settings.autoCheck);
+  document.getElementById("hintsUsed").textContent = G.hints;
+  document.getElementById("filled").textContent = `${filled}/81`;
+  document.getElementById("levelName").textContent = DIFFS[G.key].name;
+  const chip = document.getElementById("seedChip"); chip.hidden = !G.seed;
+  if (G.seed) chip.innerHTML = `Code <b>${G.seed}</b>`;
+  document.getElementById("timer").textContent = settings.showTimer ? fmt(G.time) : "";
+  document.getElementById("notesBtn").classList.toggle("on", noteMode);
+  document.getElementById("notesBadge").textContent = noteMode ? "ON" : "OFF";
+  document.getElementById("notesBtn").hidden = settings.noPencil;
+  document.getElementById("autoBtn").hidden = settings.noPencil;
+  document.querySelector(".tools").style.gridTemplateColumns = `repeat(${settings.noPencil ? 3 : 5},1fr)`;
+  document.getElementById("boardwrap").classList.toggle("nocoords", !settings.coords);
+  boardEl.classList.toggle("paused", paused);
+  document.getElementById("pauseIco").innerHTML = paused ? `<path d="M8 5v14l11-7z"/>` : `<path d="M9 6v12M15 6v12"/>`;
+}
+
+/* ---------- Minuteur ---------- */
+setInterval(() => {
+  if (!G || G.done || G.lost || paused || document.hidden || overlayOpen()) return;
+  G.time++; if (settings.showTimer) document.getElementById("timer").textContent = fmt(G.time);
+  if (G.time % 5 === 0) save();
+}, 1000);
+function setPaused(p) { paused = p; render(); }
+document.getElementById("pauseBtn").addEventListener("click", () => setPaused(!paused));
+document.getElementById("resumeBtn").addEventListener("click", () => setPaused(false));
+
+/* ---------- Fenêtres ---------- */
+const overlay = document.getElementById("overlay"), sheet = document.getElementById("sheet");
+function overlayOpen() { return overlay.classList.contains("open"); }
+function openSheet(html, dismissable = true) { sheet.innerHTML = html; overlay.classList.add("open"); overlay.dataset.dismiss = dismissable ? "1" : ""; }
+function closeSheet() { overlay.classList.remove("open"); }
+overlay.addEventListener("click", e => { if (e.target === overlay && overlay.dataset.dismiss) closeSheet(); });
+const X = `<button class="iconbtn close" data-act="closeSheet" aria-label="Fermer"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><path d="M6 6l12 12M18 6 6 18"/></svg></button>`;
+
+function showNewGame(dismissable = true) {
+  openSheet(`${dismissable ? X : ""}<h2>Nouvelle partie</h2><p class="sub">Choisis la difficulté.</p><div class="diffs">
+    ${Object.entries(DIFFS).map(([k, d]) => `<button class="diff" data-new="${k}"><div><b>${d.name}</b><br><span>${d.desc}</span></div></button>`).join("")}</div>
+    <button class="linkbtn" data-act="code">J'ai un code de grille</button>
+    <a class="linkbtn" href="#tournoi">Mode tournoi entre amis</a>`, dismissable);
+}
+function showCodeEntry() {
+  openSheet(`${X}<h2>Jouer avec un code</h2><p class="sub">Entre le code qu'on t'a envoyé (par exemple E-7KQ2MXP) pour jouer exactement la même grille.</p>
+    <input class="codein" id="codeInput" maxlength="12" autocomplete="off" autocapitalize="characters" spellcheck="false" placeholder="E-XXXXXXX" aria-label="Code de la grille">
+    <p class="codeerr" id="codeErr"></p>
+    <button class="pill primary" data-act="playCode">Jouer cette grille</button>`);
+  const inp = document.getElementById("codeInput"); inp.focus();
+  inp.addEventListener("keydown", e => { if (e.key === "Enter") playCodeInput(); });
+}
+function playCodeInput() {
+  const c = parseCode(document.getElementById("codeInput").value);
+  if (!c) { document.getElementById("codeErr").textContent = "Ce code n'est pas valide. Vérifie les lettres et chiffres."; return; }
+  startFromCode(c.code, c.key);
+}
+function showMenu() {
+  openSheet(`${X}<h2>Menu</h2><p class="sub">${G ? DIFFS[G.key].name + " · " + fmt(G.time) : ""}</p>
+    ${G && G.seed ? `<div class="codebox"><div><div class="lbl">Code de la grille</div><b>${G.seed}</b></div><button class="pill" data-act="shareGrid">Défier un ami</button></div>` : ""}
+    <div class="menu">
+    <button data-act="new">Nouvelle partie</button>
+    <button data-act="code">Jouer avec un code</button>
+    <button data-act="restart">Recommencer cette grille</button>
+    <button data-act="check">Vérifier ma grille</button>
+    <button data-act="settings">Réglages</button>
+    <button data-act="stats">Statistiques</button>
+    <button data-act="help">Comment marchent les aides</button>
+    <a href="#tournoi">Mode tournoi entre amis</a></div>`);
+}
+function toggleRow(key, title, desc) { return `<label class="row"><div><div class="t">${title}</div>${desc ? `<div class="d2">${desc}</div>` : ""}</div><input type="checkbox" class="switch" data-set="${key}" ${settings[key] ? "checked" : ""}></label>`; }
+function showSettings() {
+  openSheet(`${X}<h2>Réglages</h2><p class="sub">Enregistrés sur cet appareil.</p>
+    <div class="setlabel t">Thème</div>
+    <div class="swatches">${Object.entries(THEMES).map(([k, t]) => {
+      return `<button class="swatch ${settings.theme === k ? "on" : ""}" data-theme-set="${k}" aria-pressed="${settings.theme === k}"><span class="prev">7</span>${t.name}</button>`;
+    }).join("")}</div>
+    <div class="setlabel t">Couleur de tes chiffres</div>
+    <div class="dots">${Object.entries(DIGIT_COLORS).map(([k, c]) => {
+      const on = settings.digitColor === k;
+      return k === "theme"
+        ? `<button class="dotbtn theme ${on ? "on" : ""}" data-digit-set="theme" title="${c.name}" aria-label="${c.name}" aria-pressed="${on}">7</button>`
+        : `<button class="dotbtn ${on ? "on" : ""}" data-digit-set="${k}" title="${c.name}" aria-label="${c.name}" aria-pressed="${on}">7</button>`;
+    }).join("")}
+      <label class="dotbtn custom ${settings.digitColor === "custom" ? "on" : ""}" title="Couleur perso"><input type="color" id="digitCustom" value="${settings.digitCustom}" aria-label="Choisir une couleur perso"></label>
+    </div>
+    <div class="row"><div><div class="t">Touche du mode crayon</div><div class="d2">Sur ordinateur, active ou coupe les notes</div></div><button class="pill keybtn" id="keyBtn" data-act="pickKey">${esc(keyLabel(settings.pencilKey))}</button></div>
+    ${toggleRow("noPencil", "Mode sans crayon", "Cache les notes pour t'entraîner à tout voir de tête")}
+    ${toggleRow("autoCheck", "Signaler les erreurs", "Un mauvais chiffre s'affiche en rouge")}
+    ${toggleRow("errorLimit", "Limite de 3 erreurs", "La partie s'arrête à la 3ᵉ erreur")}
+    ${toggleRow("autoRemoveNotes", "Nettoyer les notes", "Placer un chiffre l'efface des notes voisines")}
+    ${toggleRow("hlPeers", "Surligner ligne, colonne et bloc", "")}
+    ${toggleRow("hlSame", "Surligner les chiffres identiques", "")}
+    ${toggleRow("hideDone", "Masquer les chiffres terminés", "")}
+    ${toggleRow("coords", "Numéros de lignes et colonnes", "Utile pour suivre les explications des aides")}
+    ${toggleRow("showTimer", "Afficher le chrono", "")}`);
+  paintSettings();
+}
+// Couleurs des aperçus posées par le DOM : la CSP refuse les attributs style dans le HTML
+function paintSettings() {
+  sheet.querySelectorAll("[data-theme-set]").forEach(b => {
+    const k = b.dataset.themeSet, [bg, sf, ac] = THEMES[k].prev, p = b.querySelector(".prev");
+    if (k === "auto") p.style.background = `linear-gradient(135deg,${bg} 50%,${sf} 50%)`;
+    else { p.style.background = sf; p.style.boxShadow = `inset 0 0 0 5px ${bg}`; }
+    p.style.color = ac;
+  });
+  sheet.querySelectorAll("[data-digit-set]").forEach(b => {
+    const c = DIGIT_COLORS[b.dataset.digitSet];
+    if (b.dataset.digitSet === "theme") return;
+    b.style.background = c[isDark() ? "d" : "l"]; b.style.color = isDark() ? "#0E1522" : "#fff";
+  });
+  if (settings.digitColor === "custom") sheet.querySelector(".dotbtn.custom").style.background = settings.digitCustom;
+}
+function showStats() {
+  const rows = Object.entries(DIFFS).map(([k, d]) => { const s = stats[k] || { played: 0, won: 0, best: null }; return `<div class="stat"><span>${d.name}</span><span>${s.played}</span><span>${s.won}</span><span>${s.best != null ? fmt(s.best) : "—"}</span></div>`; }).join("");
+  openSheet(`${X}<h2>Statistiques</h2><p class="sub">Sur cet appareil.</p><div class="stat head"><span>Niveau</span><span>Jouées</span><span>Gagnées</span><span>Record</span></div>${rows}`);
+}
+function showHelp() {
+  openSheet(`${X}<h2>Les aides</h2><div class="help">
+    <p>Le bouton Aide marche en deux temps. D'abord il te montre la zone à regarder et la technique, pour que tu cherches toi-même. Ensuite, si tu veux, il t'explique pas à pas et place le chiffre.</p>
+    <p>Les cases sont nommées avec L pour ligne et C pour colonne : L3C5 = 3ᵉ ligne, 5ᵉ colonne.</p>
+    <h3>Seule place possible</h3><p>Dans un bloc, une ligne ou une colonne, un chiffre n'a plus qu'une case où aller.</p>
+    <h3>Dernier chiffre possible</h3><p>Une case voit déjà 8 chiffres différents autour d'elle : il ne reste que le 9ᵉ.</p>
+    <h3>Chiffre coincé</h3><p>Dans un bloc, un chiffre ne peut aller que sur une seule ligne. On peut donc l'enlever du reste de cette ligne.</p>
+    <h3>Paires et trios</h3><p>Deux cases qui ne peuvent contenir que les deux mêmes chiffres se les « réservent ». Les autres cases de la zone ne peuvent pas les avoir.</p>
+    <h3>X-Wing</h3><p>Un chiffre a 2 places sur deux lignes, alignées en rectangle. Il est forcément dans deux coins opposés, ce qui l'élimine ailleurs dans ces colonnes.</p>
+    <h3>Raisonnement par l'absurde</h3><p>On teste un chiffre et on suit les dominos. Si on tombe sur une impossibilité, le test était faux.</p>
+  </div>`);
+}
+let winFile = null, winImgUrl = null;
+function showWin() {
+  const st = stats[G.key] || {};
+  openSheet(`<h2>Grille terminée</h2><p class="sub">${DIFFS[G.key].name}${G.seed ? ` · code ${G.seed}` : ""}</p><div class="big">${fmt(G.time)}</div>
+    <p>${G.errors} erreur(s), ${G.hints} aide(s)${st.best === G.time ? ". Nouveau record !" : "."}</p>
+    <div class="actions winactions"><button class="pill primary" data-act="shareWin">Partager</button><a class="pill nodeco" id="dlImg" hidden>Télécharger l'image</a><button class="pill" data-act="new">Nouvelle partie</button></div>
+    <img class="shareimg" id="shareImg" alt="Image de la grille terminée" hidden>`, false);
+  // L'image est préparée tout de suite : sur iPhone, le partage doit partir directement du clic
+  winFile = null;
+  resultCard().then(blob => {
+    if (!blob) return;
+    winFile = new File([blob], `sudoku-${G.seed || "grille"}.png`, { type: "image/png" });
+    if (winImgUrl) URL.revokeObjectURL(winImgUrl);
+    winImgUrl = URL.createObjectURL(blob);
+    const img = document.getElementById("shareImg"), dl = document.getElementById("dlImg");
+    if (img) { img.src = winImgUrl; img.hidden = false; }
+    if (dl) { dl.href = winImgUrl; dl.download = winFile.name; dl.hidden = false; }
+  }).catch(() => {});
+}
+
+/* ---------- Partage ---------- */
+function toast(msg) {
+  const t = document.getElementById("toast"); t.textContent = msg; t.classList.add("show");
+  clearTimeout(toast.timer); toast.timer = setTimeout(() => t.classList.remove("show"), 2600);
+}
+async function shareOrCopy(text, url, file) {
+  if (navigator.share) {
+    const data = { title: "Sudoku", text, url };
+    if (file && navigator.canShare && navigator.canShare({ files: [file] })) data.files = [file];
+    try { await navigator.share(data); return; }
+    catch (e) {
+      if (e.name === "AbortError") return;
+      if (data.files) { try { delete data.files; await navigator.share(data); return; } catch (e2) { if (e2.name === "AbortError") return; } }
+    }
+  }
+  const full = url ? `${text}\n${url}` : text;
+  try { await navigator.clipboard.writeText(full); toast("Copié ! Colle-le où tu veux."); }
+  catch (e) { window.prompt("Copie ce texte :", full); }
+}
+function shareWin() {
+  const n = (x, w) => `${x} ${w}${x > 1 ? "s" : ""}`;
+  let text = `J'ai fini un sudoku ${DIFFS[G.key].name} en ${fmt(G.time)} (${n(G.errors, "erreur")}, ${n(G.hints, "aide")}).`;
+  if (G.seed) text += ` Tu fais mieux ? Code de la grille : ${G.seed}`;
+  shareOrCopy(text, G.seed ? shareUrl(G.seed) : location.origin + location.pathname, winFile);
+}
+function shareGrid() {
+  shareOrCopy(`Essaie ce sudoku ${DIFFS[G.key].name} ! Code de la grille : ${G.seed}`, shareUrl(G.seed), null);
+}
+// Image de résultat dessinée à la main (pas de capture d'écran possible côté navigateur)
+async function resultCard() {
+  try { await document.fonts.ready; } catch (e) {}
+  const css = getComputedStyle(document.documentElement), v = n => css.getPropertyValue(n).trim();
+  const W = 1080, H = 1350, cv = document.createElement("canvas"); cv.width = W; cv.height = H;
+  const x = cv.getContext("2d");
+  x.fillStyle = v("--bg"); x.fillRect(0, 0, W, H);
+  x.textAlign = "center"; x.textBaseline = "alphabetic";
+  x.fillStyle = v("--muted"); x.font = `600 40px Figtree, sans-serif`;
+  x.fillText(`Sudoku · ${DIFFS[G.key].name}`, W / 2, 110);
+  x.fillStyle = v("--text"); x.font = `600 120px Fraunces, Georgia, serif`;
+  x.fillText(fmt(G.time), W / 2, 240);
+  x.fillStyle = v("--muted"); x.font = `500 36px Figtree, sans-serif`;
+  x.fillText(`${G.errors} erreur${G.errors > 1 ? "s" : ""} · ${G.hints} aide${G.hints > 1 ? "s" : ""}`, W / 2, 300);
+  const S = 840, ox = (W - S) / 2, oy = 360, c = S / 9;
+  x.fillStyle = v("--surface"); x.beginPath(); x.roundRect ? x.roundRect(ox, oy, S, S, 24) : x.rect(ox, oy, S, S); x.fill();
+  x.textBaseline = "middle";
+  for (let i = 0; i < 81; i++) {
+    const cx = ox + C(i) * c + c / 2, cy = oy + R(i) * c + c / 2;
+    if (G.puzzle[i]) { x.fillStyle = v("--ink"); x.font = `600 ${c * 0.6}px Fraunces, Georgia, serif`; x.fillText(G.values[i], cx, cy + 2); }
+    else { x.fillStyle = v("--digit"); x.font = `700 ${c * 0.6}px Kalam, Figtree, cursive`; x.fillText(G.values[i], cx, cy + 8); }
+  }
+  for (let k = 1; k < 9; k++) {
+    const thick = k % 3 === 0; x.strokeStyle = v(thick ? "--line-strong" : "--line"); x.lineWidth = thick ? 5 : 2;
+    x.beginPath(); x.moveTo(ox + k * c, oy); x.lineTo(ox + k * c, oy + S); x.moveTo(ox, oy + k * c); x.lineTo(ox + S, oy + k * c); x.stroke();
+  }
+  x.strokeStyle = v("--line-strong"); x.lineWidth = 6; x.beginPath(); x.roundRect ? x.roundRect(ox, oy, S, S, 24) : x.rect(ox, oy, S, S); x.stroke();
+  x.textBaseline = "alphabetic";
+  if (G.seed) { x.fillStyle = v("--text"); x.font = `600 44px ui-monospace, Menlo, monospace`; x.fillText(`Code ${G.seed}`, W / 2, oy + S + 80); }
+  x.fillStyle = v("--muted"); x.font = `500 30px Figtree, sans-serif`;
+  x.fillText(location.host + location.pathname.replace(/index\.html$/, ""), W / 2, oy + S + 130);
+  return new Promise(res => cv.toBlob(res, "image/png"));
+}
+function showLost() {
+  openSheet(`<h2>3 erreurs</h2><p class="sub">La partie est terminée.</p>
+    <div class="menu"><button data-act="second">Annuler la dernière erreur et continuer</button><button data-act="restart">Recommencer cette grille</button><button data-act="new">Nouvelle partie</button></div>`, false);
+}
+sheet.addEventListener("click", e => {
+  const n = e.target.closest("[data-new]"); if (n) { startNew(n.dataset.new); return; }
+  const t = e.target.closest("[data-theme-set]"); if (t) { settings.theme = t.dataset.themeSet; store.set("sdk-settings", settings); applyTheme(); showSettings(); return; }
+  const dc = e.target.closest("[data-digit-set]"); if (dc) { settings.digitColor = dc.dataset.digitSet; store.set("sdk-settings", settings); applyTheme(); showSettings(); return; }
+  const a = e.target.closest("[data-act]"); if (!a) return;
+  const act = a.dataset.act;
+  if (act === "closeSheet") closeSheet();
+  else if (act === "new") showNewGame(!!G && !G.done && !G.lost);
+  else if (act === "code") showCodeEntry();
+  else if (act === "playCode") playCodeInput();
+  else if (act === "shareWin") shareWin();
+  else if (act === "shareGrid") shareGrid();
+  else if (act === "keepGame") closeSheet();
+  else if (act === "restart") { G.values = G.puzzle.slice(); G.notes = new Array(81).fill(0); G.errors = 0; G.time = 0; G.done = false; G.lost = false; history = []; clearHint(); save(); closeSheet(); render(); }
+  else if (act === "check") { const w = []; for (let i = 0; i < 81; i++) if (G.values[i] && G.values[i] !== G.solution[i]) w.push(i); closeSheet(); hint = w.length ? { type: "error", cells: w } : null; hintLevel = 1; if (hint) renderHint(); else { const el = document.getElementById("hint"); el.innerHTML = `<h2><span class="dot"></span>Tout est bon</h2><p>Aucune erreur pour l'instant, continue comme ça.</p><div class="actions"><button class="pill" data-act="close">Fermer</button></div>`; el.classList.add("open"); } render(); }
+  else if (act === "settings") showSettings();
+  else if (act === "pickKey") { capturingKey = true; a.textContent = "Appuie…"; a.classList.add("wait"); }
+  else if (act === "stats") showStats();
+  else if (act === "help") showHelp();
+  else if (act === "second") { undo(); G.errors = Math.max(0, G.errors - 1); G.lost = false; save(); closeSheet(); render(); }
+});
+sheet.addEventListener("input", e => {
+  if (e.target.id !== "digitCustom") return;
+  settings.digitColor = "custom"; settings.digitCustom = e.target.value; applyTheme();
+  const lbl = e.target.parentElement; lbl.style.background = e.target.value;
+  sheet.querySelectorAll(".dotbtn").forEach(b => b.classList.toggle("on", b === lbl));
+});
+sheet.addEventListener("change", e => {
+  if (e.target.id === "digitCustom") { store.set("sdk-settings", settings); return; }
+  const k = e.target.dataset.set; if (!k) return;
+  settings[k] = e.target.checked; store.set("sdk-settings", settings);
+  if (k === "noPencil" && settings.noPencil) noteMode = false;
+  render();
+});
+
+async function startNew(key) {
+  openSheet(`<h2>${DIFFS[key].name}</h2><div class="loading"><span class="spin"></span>Je prépare une grille qui demande les bonnes techniques…</div>`, false);
+  await new Promise(r => setTimeout(r, 30));
+  beginGame(key, await generate(key));
+}
+async function startFromCode(code, key) {
+  openSheet(`<h2>${DIFFS[key].name}</h2><div class="loading"><span class="spin"></span>Je prépare la grille ${code}…</div>`, false);
+  await new Promise(r => setTimeout(r, 30));
+  beginGame(key, Object.assign(puzzleFromCode(code, key), { code }));
+}
+function beginGame(key, g) {
+  const st = stats[key] || { played: 0, won: 0, best: null }; st.played++; stats[key] = st; store.set("sdk-stats", stats);
+  G = { key, seed: g.code, puzzle: g.puzzle, solution: g.solution, values: g.puzzle.slice(), notes: new Array(81).fill(0), errors: 0, hints: 0, time: 0, done: false, lost: false };
+  history = []; noteMode = false; paused = false; clearHint();
+  selected = g.puzzle.findIndex(x => !x);
+  save(); closeSheet(); render();
+}
+
+/* ---------- Commandes ---------- */
+document.getElementById("menuBtn").addEventListener("click", showMenu);
+document.getElementById("undoBtn").addEventListener("click", undo);
+document.getElementById("eraseBtn").addEventListener("click", erase);
+document.getElementById("notesBtn").addEventListener("click", () => { noteMode = !noteMode; render(); });
+document.getElementById("autoBtn").addEventListener("click", autoNotes);
+document.getElementById("hintBtn").addEventListener("click", askHint);
+document.getElementById("seedChip").addEventListener("click", () => { if (G && G.seed) shareGrid(); });
+document.addEventListener("keydown", e => {
+  if (capturingKey) {
+    e.preventDefault(); e.stopPropagation();
+    const k = e.key.toLowerCase(), btn = document.getElementById("keyBtn");
+    if (k === "escape") { capturingKey = false; if (btn) { btn.textContent = keyLabel(settings.pencilKey); btn.classList.remove("wait"); } return; }
+    if (RESERVED_KEYS.has(k) || /^(Digit|Numpad)/.test(e.code) || e.ctrlKey || e.metaKey) { if (btn) btn.textContent = "Pas celle-là"; return; }
+    capturingKey = false; settings.pencilKey = k; store.set("sdk-settings", settings); renderFoot();
+    if (btn) { btn.textContent = keyLabel(k); btn.classList.remove("wait"); }
+    return;
+  }
+  if (overlayOpen()) { if (e.key === "Escape" && overlay.dataset.dismiss) closeSheet(); return; }
+  if (!G) return;
+  if ((e.ctrlKey || e.metaKey) && e.key.toLowerCase() === "z") { e.preventDefault(); undo(); return; }
+  if (e.ctrlKey || e.metaKey || e.altKey) return;
+  const k = e.key;
+  // e.code = touche physique : marche aussi en AZERTY sans Maj (où e.key vaut "&", "é"…)
+  const dm = /^(?:Digit|Numpad)([0-9])$/.exec(e.code);
+  const digit = dm ? +dm[1] : /^[0-9]$/.test(k) ? +k : -1;
+  if (k.toLowerCase() === settings.pencilKey) { if (!settings.noPencil) { noteMode = !noteMode; render(); } e.preventDefault(); }
+  else if (digit >= 1) { input(digit); e.preventDefault(); }
+  else if (k === "Backspace" || k === "Delete" || digit === 0) { erase(); e.preventDefault(); }
+  else if (k === "ArrowUp") { selected = (selected + 72) % 81; render(); cells[selected].focus({ preventScroll: true }); e.preventDefault(); }
+  else if (k === "ArrowDown") { selected = (selected + 9) % 81; render(); cells[selected].focus({ preventScroll: true }); e.preventDefault(); }
+  else if (k === "ArrowLeft") { selected = R(selected) * 9 + (C(selected) + 8) % 9; render(); cells[selected].focus({ preventScroll: true }); e.preventDefault(); }
+  else if (k === "ArrowRight") { selected = R(selected) * 9 + (C(selected) + 1) % 9; render(); cells[selected].focus({ preventScroll: true }); e.preventDefault(); }
+  else if (k.toLowerCase() === "h") askHint();
+  else if (k === " ") { setPaused(!paused); e.preventDefault(); }
+});
+
+/* ---------- Démarrage ---------- */
+applyTheme(); renderFoot();
+(function boot() {
+  const saved = store.get("sdk-game", null);
+  const resumable = saved && saved.puzzle && !saved.done && DIFFS[saved.key];
+  if (resumable) { G = saved; selected = G.values.findIndex(x => !x); if (selected < 0) selected = 0; render(); }
+  // Lien partagé : ?g=E-7KQ2MXP
+  const params = new URLSearchParams(location.search), shared = parseCode(params.get("g"));
+  if (params.has("g")) window.history.replaceState(null, "", location.pathname + location.hash);
+  if (shared && !(resumable && G.seed === shared.code)) {
+    const inProgress = resumable && !G.lost && G.values.some((x, i) => x && !G.puzzle[i]);
+    if (!inProgress) { startFromCode(shared.code, shared.key); return; }
+    openSheet(`<h2>Grille partagée</h2><p class="sub">On t'a envoyé la grille ${DIFFS[shared.key].name} <b>${shared.code}</b>. Ta partie en cours sera remplacée.</p>
+      <div class="menu"><button data-act="playShared">Jouer la grille partagée</button><button data-act="keepGame">Garder ma partie</button></div>`, false);
+    sheet.querySelector("[data-act=playShared]").addEventListener("click", () => startFromCode(shared.code, shared.key));
+    return;
+  }
+  if (!resumable) showNewGame(false);
+})();

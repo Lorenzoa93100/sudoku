@@ -2,7 +2,7 @@
 
 Jeu de sudoku avec aides expliquées, jouable dans le navigateur.
 
-Tout tient dans un seul fichier : `index.html`.
+Fichiers : `index.html` (structure et CSP), `app.css`, `app.js` (jeu solo), `tournoi.js` (mode tournoi), `fonts/` (polices hébergées ici, licence SIL OFL). Aucune ressource tierce.
 
 ## Personnalisation (Menu → Réglages)
 
@@ -19,3 +19,37 @@ Les réglages, les stats et la partie en cours sont gardés dans le `localStorag
 - **Menu → Défier un ami** envoie le code et un lien `?g=CODE` qui ouvre directement cette grille.
 - **Menu → Jouer avec un code** (ou « J'ai un code de grille » au choix de la difficulté) pour saisir un code reçu.
 - En fin de partie, **Partager** envoie le temps, la difficulté, le code et une image de la grille terminée (sur mobile, via le menu de partage du téléphone ; sur ordinateur, le texte est copié et l'image peut être téléchargée).
+
+## Mode tournoi entre amis
+
+Accès : **Menu → Mode tournoi entre amis**, ou directement `https://lorenzoa93100.github.io/sudoku/#tournoi`.
+
+- Inscription avec le code d'invitation donné par l'organisateur, un pseudo et un avatar.
+- Une manche = la même grille pour tous, un seul essai. La grille n'arrive qu'au démarrage ; le serveur mesure le temps et valide la grille. Le chrono affiché est indicatif et aucun temps n'est envoyé.
+- Pas d'aides. Une grille fausse indique seulement le nombre d'essais restants, jamais les cases fausses.
+- Classement par manche : rang, avatar, pseudo, temps, victoires ; « classement définitif » quand la manche est terminée.
+
+Le jeu solo et ses codes de grille sont inchangés (les tests le vérifient grille par grille).
+
+## Sécurité
+
+- CSP stricte dans une balise `<meta>` : scripts, styles et polices uniquement depuis `/sudoku/`, aucun `unsafe-inline`, `connect-src` limité à l'API.
+- Limites d'une CSP en `<meta>` (GitHub Pages ne permet pas d'envoyer d'en-têtes) : `frame-ancestors`, `report-uri`/`report-to` et `sandbox` y sont ignorés. Le mode tournoi refuse donc lui-même de s'ouvrir dans un cadre.
+- Tout ce qui vient du serveur est affiché avec `textContent` (`tournoi.js` ne contient aucun `innerHTML`). Les messages d'erreur sont choisis côté front d'après le code d'erreur, jamais recopiés du serveur.
+- Jeton de session dans `localStorage` sous la clé `sudoku-tournoi-token` (header `Authorization`, pas de cookie). Toutes les pages de `lorenzoa93100.github.io` partagent ce stockage : n'y publier aucun autre site non maîtrisé.
+- Aucun secret dans ce dépôt.
+
+## Configuration
+
+L'adresse de l'API est écrite **à un seul endroit** : la directive `connect-src` de la CSP dans `index.html` (`https://jeu.taila17c77.ts.net`). `tournoi.js` la relit à partir de là. Si le dépôt change de nom, mettre à jour les chemins `/sudoku/` de la même CSP.
+
+## Développement et tests
+
+Le mode tournoi se développe contre un faux serveur d'API (`dev/fake-api.mjs`) qui imite la production, CORS de Caddy compris. Rien dans `dev/` n'est publié (`_config.yml`).
+
+```sh
+node --test --test-concurrency=1 dev/   # tests de bout en bout (Node 20+, Playwright et Chromium installés)
+node dev/serve.mjs                      # essai manuel : affiche la commande Chromium à lancer
+```
+
+Les tests chargent la page sous son vrai nom de domaine et parlent à l'API sous le sien, grâce à des serveurs HTTPS locaux et à une redirection DNS dans Chromium : la vraie CSP et le vrai CORS s'appliquent, sans rien relâcher côté serveur.
