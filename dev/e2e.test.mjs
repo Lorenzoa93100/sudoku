@@ -1,4 +1,4 @@
-// Tests de bout en bout : node --test dev/
+// Tests de bout en bout : node --test --test-concurrency=1 "dev/*.test.mjs"
 // Chromium charge https://lorenzoa93100.github.io/sudoku/ et parle à https://jeu.taila17c77.ts.net,
 // tous deux servis localement (dev/servers.mjs) : vraie CSP, vrai CORS, vrais pré-vols.
 import assert from "node:assert/strict";
@@ -23,9 +23,9 @@ let servers, browser, fake;
 const proxy = { handle: r => fake.handle(r) };
 
 before(async () => {
-  // Ancienne version (main avant ce lot) servie sous /orig/ pour comparer le solo.
+  // Version d'avant le mode tournoi (un seul fichier, sans CSP) servie sous /orig/ pour comparer le solo.
   const orig = mkdtempSync(join(tmpdir(), "sudoku-orig-"));
-  writeFileSync(join(orig, "index.html"), execFileSync("git", ["show", "origin/main:index.html"], { cwd: ROOT }));
+  writeFileSync(join(orig, "index.html"), execFileSync("git", ["show", "c7959be:index.html"], { cwd: ROOT }));
   servers = await startServers({ root: ROOT, fake: proxy, extra: { "/orig/": orig } });
   browser = await chromium.launch({
     args: [`--host-resolver-rules=${servers.hostRules}`],

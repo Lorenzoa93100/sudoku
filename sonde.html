@@ -1,0 +1,38 @@
+<!DOCTYPE html>
+<html lang="fr">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<!-- Page TEMPORAIRE du lot 0 (mesure du temps réel à travers Funnel), retirée juste après.
+     CSP propre à cette page : son seul script, l'API, rien d'autre (pas même de style). -->
+<meta http-equiv="Content-Security-Policy" content="default-src 'none'; script-src https://lorenzoa93100.github.io/sudoku/sonde.js; connect-src https://jeu.taila17c77.ts.net; base-uri 'none'; form-action 'none'">
+<meta name="referrer" content="no-referrer">
+<meta name="robots" content="noindex, nofollow">
+<title>Sonde temps réel</title>
+</head>
+<body>
+<h1>Sonde temps réel (temporaire)</h1>
+<p>Mesure d'un flux temps réel entre ce navigateur et le serveur. Coupe Tailscale sur cet
+appareil avant de commencer. Le secret vient de <code>probe open</code> sur la VM : colle-le
+ici, il reste dans la mémoire de cette page et n'est envoyé qu'au serveur.</p>
+<p><label>Secret <input id="secret" type="password" autocomplete="off" autocapitalize="off" spellcheck="false" size="40"></label></p>
+<p>
+  <label>Intervalle
+    <select id="interval"><option value="1">1 s</option><option value="2" selected>2 s</option><option value="5">5 s</option><option value="10">10 s</option><option value="15">15 s</option></select>
+  </label>
+  <label>Remplissage
+    <select id="pad"><option value="0" selected>0 o</option><option value="512">512 o</option><option value="1024">1 Ko</option><option value="2048">2 Ko</option></select>
+  </label>
+</p>
+<p>
+  <button type="button" id="start">Démarrer</button>
+  <button type="button" id="stop" disabled>Arrêter</button>
+  <button type="button" id="echo">Mesurer l'aller-retour</button>
+  <button type="button" id="copy">Copier les résultats</button>
+</p>
+<pre id="status">En attente.</pre>
+<h2>Journal</h2>
+<pre id="log"></pre>
+<script src="sonde.js"></script>
+</body>
+</html>

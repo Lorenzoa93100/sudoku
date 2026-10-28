@@ -48,7 +48,7 @@ L'adresse de l'API est écrite **à un seul endroit** : la directive `connect-sr
 Le mode tournoi se développe contre un faux serveur d'API (`dev/fake-api.mjs`) qui imite la production, CORS de Caddy compris. Rien dans `dev/` n'est publié (`_config.yml`).
 
 ```sh
-node --test --test-concurrency=1 dev/   # tests de bout en bout (Node 20+, Playwright et Chromium installés)
+node --test --test-concurrency=1 "dev/*.test.mjs"   # tests de bout en bout (Node 22+, Playwright et Chromium installés)
 node dev/serve.mjs                      # essai manuel : affiche la commande Chromium à lancer
 ```
 
