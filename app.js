@@ -855,9 +855,38 @@ document.addEventListener("keydown", e => {
 
 /* ---------- Démarrage ---------- */
 applyTheme(); renderFoot();
+// La partie relue depuis localStorage n'est jamais fiable : forme et valeurs sont vérifiées,
+// sinon on l'ignore (pas de « Continuer ») au lieu de planter le rendu.
+function validSavedGame(g) {
+  const isCount = n => Number.isSafeInteger(n) && n >= 0;
+  const grid81 = (a, lo, hi) => Array.isArray(a) && a.length === 81 && a.every(x => Number.isInteger(x) && x >= lo && x <= hi);
+  if (!g || typeof g !== "object" || Array.isArray(g) || !Object.prototype.hasOwnProperty.call(DIFFS, g.key)) return false;
+  if (g.seed != null && !(typeof g.seed === "string" && parseCode(g.seed) && parseCode(g.seed).code === g.seed)) return false;
+  if (!grid81(g.puzzle, 0, 9) || !grid81(g.solution, 1, 9) || !grid81(g.values, 0, 9) || !grid81(g.notes, 0, ALL)) return false;
+  if (g.notes.some(m => m & ~ALL)) return false;
+  if (!UNITS.every(u => new Set(u.map(i => g.solution[i])).size === 9)) return false;
+  if (g.puzzle.some((p, i) => p && (p !== g.solution[i] || g.values[i] !== p))) return false;
+  return isCount(g.errors) && isCount(g.hints) && isCount(g.time) && typeof g.done === "boolean" && typeof g.lost === "boolean";
+}
+// Écran d'accueil (construit par le DOM, sans innerHTML)
+function showHome(canContinue) {
+  const btn = (label, sub, onClick) => {
+    const b = document.createElement("button"); b.type = "button"; b.textContent = label;
+    if (sub) { const s = document.createElement("span"); s.className = "homesub"; s.textContent = sub; b.append(s); }
+    b.addEventListener("click", onClick); return b;
+  };
+  const h = document.createElement("h2"); h.textContent = "Sudoku";
+  const p = document.createElement("p"); p.className = "sub"; p.textContent = "Que veux-tu faire ?";
+  const menu = document.createElement("div"); menu.className = "menu home";
+  menu.append(btn("Nouvelle partie", "", () => showNewGame(!!G && !G.done && !G.lost)));
+  if (canContinue) menu.append(btn("Continuer la partie", `${DIFFS[G.key].name} · ${fmt(G.time)}`, closeSheet));
+  const t = document.createElement("a"); t.href = "#tournoi"; t.textContent = "Mode tournoi entre amis";
+  menu.append(t);
+  sheet.replaceChildren(h, p, menu); overlay.classList.add("open"); overlay.dataset.dismiss = "";
+}
 (function boot() {
   const saved = store.get("sdk-game", null);
-  const resumable = saved && saved.puzzle && !saved.done && DIFFS[saved.key];
+  const resumable = validSavedGame(saved) && !saved.done;
   if (resumable) { G = saved; selected = G.values.findIndex(x => !x); if (selected < 0) selected = 0; render(); }
   // Lien partagé : ?g=E-7KQ2MXP
   const params = new URLSearchParams(location.search), shared = parseCode(params.get("g"));
@@ -870,5 +899,6 @@ applyTheme(); renderFoot();
     sheet.querySelector("[data-act=playShared]").addEventListener("click", () => startFromCode(shared.code, shared.key));
     return;
   }
-  if (!resumable) showNewGame(false);
+  // Lien direct #tournoi : tournoi.js prend la main, pas d'écran d'accueil.
+  if (location.hash !== "#tournoi") showHome(resumable);
 })();

@@ -23,9 +23,9 @@ let servers, browser, fake;
 const proxy = { handle: r => fake.handle(r) };
 
 before(async () => {
-  // Ancienne version (main avant ce lot) servie sous /orig/ pour comparer le solo.
+  // Version d'avant le mode tournoi (un seul fichier, sans CSP) servie sous /orig/ pour comparer le solo.
   const orig = mkdtempSync(join(tmpdir(), "sudoku-orig-"));
-  writeFileSync(join(orig, "index.html"), execFileSync("git", ["show", "origin/main:index.html"], { cwd: ROOT }));
+  writeFileSync(join(orig, "index.html"), execFileSync("git", ["show", "c7959be:index.html"], { cwd: ROOT }));
   servers = await startServers({ root: ROOT, fake: proxy, extra: { "/orig/": orig } });
   browser = await chromium.launch({
     args: [`--host-resolver-rules=${servers.hostRules}`],
@@ -73,6 +73,13 @@ async function loggedIn(path = "#tournoi", opts) {
   const { token } = fake.addUser("Alice", "dragon");
   return open(path, { ...opts, init: `localStorage.setItem(${JSON.stringify(TOKEN_KEY)}, ${JSON.stringify(token)})` });
 }
+// Depuis l'écran d'accueil : « Nouvelle partie » puis une difficulté.
+async function newGame(page, key = "facile") {
+  await page.click('.menu.home button:has-text("Nouvelle partie")');
+  await page.click(`[data-new="${key}"]`);
+  await page.waitForFunction(() => typeof G !== "undefined" && G && !document.getElementById("overlay").classList.contains("open"));
+}
+const homeButtons = page => page.$$eval(".menu.home > *", els => els.map(e => e.childNodes[0].textContent.trim()));
 async function fillGrid(page, grid) {
   for (let i = 0; i < 81; i++) {
     if (PUZZLE[i] !== "0") continue;
@@ -125,7 +132,7 @@ describe("faux serveur : même CORS que Caddy", () => {
 describe("jeu solo inchangé", () => {
   test("se charge sans violation de CSP ni ressource tierce, polices locales", async () => {
     const { page, ctx, watch } = await open();
-    await page.click('[data-new="facile"]');
+    await newGame(page);
     await page.waitForFunction(() => document.querySelectorAll("#board .cell.given").length >= 37);
     const faces = await page.evaluate(async () => (await Promise.all(["600 20px Fraunces", "700 20px Kalam", "500 20px Figtree"]
       .map(f => document.fonts.load(f)))).map(l => l.length && l.every(x => x.status === "loaded")));
@@ -152,7 +159,7 @@ describe("jeu solo inchangé", () => {
 
   test("réglages, aides et fin de partie : rendu identique sans attribut style", async () => {
     const { page, ctx, watch } = await open();
-    await page.click('[data-new="facile"]');
+    await newGame(page);
     await page.waitForFunction(() => typeof G !== "undefined" && G);
     // Aide niveau 2 : légende colorée par classes
     await page.click("#hintBtn");
@@ -171,6 +178,121 @@ describe("jeu solo inchangé", () => {
     await page.waitForSelector("#shareImg:not([hidden])");
     assert.equal(await page.$eval(".winactions", d => getComputedStyle(d).display), "flex");
     await watch.check(); await ctx.close();
+  });
+});
+
+describe("écran d'accueil", () => {
+  // Partie valide enregistrée par le jeu lui-même, réutilisée pour fabriquer les cas corrompus.
+  let savedGame;
+  before(async () => {
+    const { page, ctx } = await open();
+    await newGame(page);
+    await page.evaluate(() => { const i = G.puzzle.findIndex(x => !x); selected = i; input(G.solution[i]); G.time = 75; save(); });
+    savedGame = JSON.parse(await page.evaluate(() => localStorage.getItem("sdk-game")));
+    await ctx.close();
+  });
+  const withGame = value => `localStorage.setItem("sdk-game", ${JSON.stringify(typeof value === "string" ? value : JSON.stringify(value))})`;
+
+  test("aucune partie : Nouvelle partie et Mode tournoi, pas de Continuer", async () => {
+    const { page, ctx, watch } = await open();
+    await page.waitForSelector(".menu.home");
+    assert.deepEqual(await homeButtons(page), ["Nouvelle partie", "Mode tournoi entre amis"]);
+    assert.equal(await page.evaluate(() => document.getElementById("overlay").dataset.dismiss), "", "pas de fermeture sans choix");
+    await page.click('.menu.home button:has-text("Nouvelle partie")');
+    assert.equal(await page.$$eval("[data-new]", b => b.length), 5, "choix de difficulté actuel");
+    await watch.check(); await ctx.close();
+  });
+
+  test("partie sauvegardée : Continuer reprend exactement la partie", async () => {
+    const { page, ctx, watch } = await open("", { init: withGame(savedGame) });
+    await page.waitForSelector(".menu.home");
+    assert.deepEqual(await homeButtons(page), ["Nouvelle partie", "Continuer la partie", "Mode tournoi entre amis"]);
+    assert.match(await page.textContent(".menu.home .homesub"), /^Facile · 01:15$/);
+    await page.click('.menu.home button:has-text("Continuer la partie")');
+    assert.equal(await page.evaluate(() => document.getElementById("overlay").classList.contains("open")), false);
+    assert.equal(await page.evaluate(() => JSON.stringify(G.values)), JSON.stringify(savedGame.values));
+    assert.equal(await page.evaluate(() => G.time), 75);
+    await watch.check(); await ctx.close();
+  });
+
+  test("partie terminée : pas de Continuer", async () => {
+    const { page, ctx } = await open("", { init: withGame({ ...savedGame, done: true }) });
+    await page.waitForSelector(".menu.home");
+    assert.deepEqual(await homeButtons(page), ["Nouvelle partie", "Mode tournoi entre amis"]);
+    await ctx.close();
+  });
+
+  const corrupted = {
+    "texte non JSON": { raw: "{oups" },
+    "tableau": { raw: "[1,2,3]" },
+    "null": { raw: "null" },
+    "difficulté inconnue": { key: "__proto__" },
+    "values trop court": { values: [1, 2] },
+    "valeur hors limites": { values: Array(81).fill(12) },
+    "valeur non entière": { values: Array(81).fill(1.5) },
+    "chaîne au lieu de tableau": { puzzle: "530070000" },
+    "indice modifié": { values: [0, ...Array(80).fill(0)] },
+    "solution invalide": { solution: Array(81).fill(1) },
+    "notes négatives": { notes: Array(81).fill(-1) },
+    "temps en texte": { time: "75" },
+    "code de grille forgé": { seed: "<img src=x onerror=alert(1)>" },
+    "done non booléen": { done: "non" },
+  };
+  for (const [name, change] of Object.entries(corrupted)) {
+    test(`données corrompues (${name}) : pas de Continuer, page intacte`, async () => {
+      const value = change.raw ?? JSON.stringify({ ...savedGame, ...change });
+      const { page, ctx, watch } = await open("", { init: `localStorage.setItem("sdk-game", ${JSON.stringify(value)})` });
+      await page.waitForSelector(".menu.home");
+      assert.deepEqual(await homeButtons(page), ["Nouvelle partie", "Mode tournoi entre amis"]);
+      await newGame(page);
+      await watch.check(); await ctx.close();
+    });
+  }
+
+  test("localStorage indisponible : pas de Continuer, le jeu fonctionne", async () => {
+    const { page, ctx, watch } = await open("", { init: () => {
+      Object.defineProperty(window, "localStorage", { get() { throw new DOMException("bloqué", "SecurityError"); } });
+    } });
+    await page.waitForSelector(".menu.home");
+    assert.deepEqual(await homeButtons(page), ["Nouvelle partie", "Mode tournoi entre amis"]);
+    await newGame(page);
+    await page.evaluate(() => { const i = G.puzzle.findIndex(x => !x); selected = i; input(G.solution[i]); });
+    assert.ok(await page.evaluate(() => G.values.some((v, i) => v && !G.puzzle[i])));
+    await watch.check(); await ctx.close();
+  });
+
+  test("?g=CODE avec une partie en cours : confirmation avant de la remplacer", async () => {
+    const { page, ctx, watch } = await open("?g=M-ZZZZZZZ", { init: withGame(savedGame) });
+    await page.waitForSelector('[data-act="playShared"]');
+    assert.match(await page.textContent("#sheet"), /Ta partie en cours sera remplacée/);
+    await page.click('[data-act="keepGame"]');
+    assert.equal(await page.evaluate(() => G.seed), savedGame.seed);
+    assert.equal(await page.evaluate(() => location.search), "", "le paramètre est retiré de l'adresse");
+    await page.goto(`${servers.url}?g=M-ZZZZZZZ`);
+    await page.click('[data-act="playShared"]');
+    await page.waitForFunction(() => G && G.seed === "M-ZZZZZZZ");
+    await watch.check(); await ctx.close();
+  });
+
+  test("?g=CODE sans partie : la grille démarre directement, sans accueil", async () => {
+    const { page, ctx } = await open("?g=M-ZZZZZZZ");
+    await page.waitForFunction(() => typeof G !== "undefined" && G && G.seed === "M-ZZZZZZZ");
+    assert.equal(await page.$$eval(".menu.home", e => e.length), 0);
+    await ctx.close();
+  });
+
+  test("lien direct #tournoi : pas d'écran d'accueil", async () => {
+    const { page, ctx, watch } = await open("#tournoi", { init: withGame(savedGame) });
+    await page.waitForSelector("#vRegister:not([hidden])");
+    assert.equal(await page.evaluate(() => document.getElementById("overlay").classList.contains("open")), false);
+    await watch.check(); await ctx.close();
+  });
+
+  test("Mode tournoi depuis l'accueil", async () => {
+    const { page, ctx } = await open();
+    await page.click('.menu.home a[href="#tournoi"]');
+    await page.waitForSelector("#vRegister:not([hidden])");
+    await ctx.close();
   });
 });
 
@@ -365,7 +487,7 @@ describe("mode tournoi", () => {
 
   test("le solo ne reçoit aucune touche en mode tournoi, puis reste en pause", async () => {
     const { page, ctx } = await open();
-    await page.click('[data-new="facile"]');
+    await newGame(page);
     await page.waitForFunction(() => typeof G !== "undefined" && G);
     const before = await page.evaluate(() => JSON.stringify(G.values));
     await page.evaluate(() => { location.hash = "#tournoi"; });

@@ -406,3 +406,7 @@ a.linkbtn{display:inline-block;text-decoration:none}
 .ttools .badge{position:static}
 .ttable td:first-child{white-space:nowrap}
 .thead .th2{margin:16px 0 8px}
+
+/* ---------- Écran d'accueil ---------- */
+.menu.home button{display:flex;flex-direction:column;align-items:flex-start;gap:2px}
+.homesub{color:var(--muted);font-size:13px;font-weight:500}
