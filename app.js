@@ -868,21 +868,42 @@ function validSavedGame(g) {
   if (g.puzzle.some((p, i) => p && (p !== g.solution[i] || g.values[i] !== p))) return false;
   return isCount(g.errors) && isCount(g.hints) && isCount(g.time) && typeof g.done === "boolean" && typeof g.lost === "boolean";
 }
-// Écran d'accueil (construit par le DOM, sans innerHTML)
+// Écran d'accueil et choix du mode (construits par le DOM, sans innerHTML).
+// Accueil → Nouvelle partie → Solo (choix de difficulté) | Tournoi → Rejoindre | Créer (bientôt).
+function homeButton(label, sub, onClick) {
+  const b = document.createElement("button"); b.type = "button"; b.textContent = label;
+  if (sub) { const s = document.createElement("span"); s.className = "homesub"; s.textContent = sub; b.append(s); }
+  if (onClick) b.addEventListener("click", onClick);
+  return b;
+}
+function homeSheet(title, subtitle, buttons, back) {
+  const h = document.createElement("h2"); h.textContent = title;
+  const p = document.createElement("p"); p.className = "sub"; p.textContent = subtitle;
+  const menu = document.createElement("div"); menu.className = "menu home"; menu.append(...buttons);
+  const parts = [h, p, menu];
+  if (back) {
+    const r = document.createElement("button"); r.type = "button"; r.className = "linkbtn homeback";
+    r.textContent = "Retour"; r.addEventListener("click", back); parts.push(r);
+  }
+  sheet.replaceChildren(...parts); overlay.classList.add("open"); overlay.dataset.dismiss = "";
+}
 function showHome(canContinue) {
-  const btn = (label, sub, onClick) => {
-    const b = document.createElement("button"); b.type = "button"; b.textContent = label;
-    if (sub) { const s = document.createElement("span"); s.className = "homesub"; s.textContent = sub; b.append(s); }
-    b.addEventListener("click", onClick); return b;
-  };
-  const h = document.createElement("h2"); h.textContent = "Sudoku";
-  const p = document.createElement("p"); p.className = "sub"; p.textContent = "Que veux-tu faire ?";
-  const menu = document.createElement("div"); menu.className = "menu home";
-  menu.append(btn("Nouvelle partie", "", () => showNewGame(!!G && !G.done && !G.lost)));
-  if (canContinue) menu.append(btn("Continuer la partie", `${DIFFS[G.key].name} · ${fmt(G.time)}`, closeSheet));
-  const t = document.createElement("a"); t.href = "#tournoi"; t.textContent = "Mode tournoi entre amis";
-  menu.append(t);
-  sheet.replaceChildren(h, p, menu); overlay.classList.add("open"); overlay.dataset.dismiss = "";
+  const buttons = [homeButton("Nouvelle partie", "", () => showModeChoice(canContinue))];
+  if (canContinue) buttons.push(homeButton("Continuer la partie", `${DIFFS[G.key].name} · ${fmt(G.time)}`, closeSheet));
+  homeSheet("Sudoku", "Que veux-tu faire ?", buttons, null);
+}
+function showModeChoice(canContinue) {
+  homeSheet("Nouvelle partie", "Seul ou entre amis ?", [
+    homeButton("Solo", "Choisis la difficulté", () => showNewGame(!!G && !G.done && !G.lost)),
+    homeButton("Tournoi", "Contre tes amis", () => showTournamentChoice(canContinue)),
+  ], () => showHome(canContinue));
+}
+function showTournamentChoice(canContinue) {
+  const join = homeButton("Rejoindre", "Avec un code de tournoi", () => { closeSheet(); location.hash = "#tournoi"; });
+  // Pas encore disponible : désactivé, sans action ni requête.
+  const create = homeButton("Créer", "Bientôt disponible", null);
+  create.disabled = true; create.setAttribute("aria-disabled", "true"); create.classList.add("soon");
+  homeSheet("Tournoi", "Rejoindre un tournoi ou en créer un.", [join, create], () => showModeChoice(canContinue));
 }
 (function boot() {
   const saved = store.get("sdk-game", null);

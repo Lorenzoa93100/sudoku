@@ -410,3 +410,5 @@ a.linkbtn{display:inline-block;text-decoration:none}
 /* ---------- Écran d'accueil ---------- */
 .menu.home button{display:flex;flex-direction:column;align-items:flex-start;gap:2px}
 .homesub{color:var(--muted);font-size:13px;font-weight:500}
+.menu.home button.soon{opacity:.5;cursor:not-allowed}
+.homeback{margin-top:12px}

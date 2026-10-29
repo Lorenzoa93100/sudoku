@@ -477,7 +477,8 @@ function enter() {
 function leave() {
   active = false; stopPlay();
   $("tournoi").hidden = true; $("app").hidden = false;
-  if (typeof G !== "undefined" && !G && typeof showNewGame === "function") showNewGame(false);
+  // Sans partie solo : retour à l'écran d'accueil (app.js).
+  if (typeof G !== "undefined" && !G && typeof showHome === "function") showHome(false);
 }
 function route() {
   const on = location.hash === "#tournoi";

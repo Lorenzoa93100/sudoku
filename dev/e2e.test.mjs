@@ -73,13 +73,20 @@ async function loggedIn(path = "#tournoi", opts) {
   const { token } = fake.addUser("Alice", "dragon");
   return open(path, { ...opts, init: `localStorage.setItem(${JSON.stringify(TOKEN_KEY)}, ${JSON.stringify(token)})` });
 }
-// Depuis l'écran d'accueil : « Nouvelle partie » puis une difficulté.
+// Depuis l'écran d'accueil : « Nouvelle partie », « Solo », puis une difficulté.
 async function newGame(page, key = "facile") {
   await page.click('.menu.home button:has-text("Nouvelle partie")');
+  await page.click('.menu.home button:has-text("Solo")');
   await page.click(`[data-new="${key}"]`);
   await page.waitForFunction(() => typeof G !== "undefined" && G && !document.getElementById("overlay").classList.contains("open"));
 }
 const homeButtons = page => page.$$eval(".menu.home > *", els => els.map(e => e.childNodes[0].textContent.trim()));
+// Accueil → Nouvelle partie → Tournoi → Rejoindre : les écrans tournoi existants.
+async function joinTournament(page) {
+  await page.click('.menu.home button:has-text("Nouvelle partie")');
+  await page.click('.menu.home button:has-text("Tournoi")');
+  await page.click('.menu.home button:has-text("Rejoindre")');
+}
 async function fillGrid(page, grid) {
   for (let i = 0; i < 81; i++) {
     if (PUZZLE[i] !== "0") continue;
@@ -193,20 +200,55 @@ describe("écran d'accueil", () => {
   });
   const withGame = value => `localStorage.setItem("sdk-game", ${JSON.stringify(typeof value === "string" ? value : JSON.stringify(value))})`;
 
-  test("aucune partie : Nouvelle partie et Mode tournoi, pas de Continuer", async () => {
+  test("aucune partie : Nouvelle partie seule, sans Continuer ni Mode tournoi", async () => {
     const { page, ctx, watch } = await open();
     await page.waitForSelector(".menu.home");
-    assert.deepEqual(await homeButtons(page), ["Nouvelle partie", "Mode tournoi entre amis"]);
+    assert.deepEqual(await homeButtons(page), ["Nouvelle partie"]);
+    assert.equal(await page.$$eval('#sheet a[href="#tournoi"]', a => a.length), 0, "plus de lien tournoi sur l'accueil");
     assert.equal(await page.evaluate(() => document.getElementById("overlay").dataset.dismiss), "", "pas de fermeture sans choix");
     await page.click('.menu.home button:has-text("Nouvelle partie")');
+    assert.deepEqual(await homeButtons(page), ["Solo", "Tournoi"]);
+    await page.click('.menu.home button:has-text("Solo")');
     assert.equal(await page.$$eval("[data-new]", b => b.length), 5, "choix de difficulté actuel");
     await watch.check(); await ctx.close();
+  });
+
+  test("Nouvelle partie → Tournoi : Rejoindre ouvre les écrans tournoi, Créer est inactif", async () => {
+    const { page, ctx, watch } = await open();
+    await page.click('.menu.home button:has-text("Nouvelle partie")');
+    await page.click('.menu.home button:has-text("Tournoi")');
+    assert.deepEqual(await homeButtons(page), ["Rejoindre", "Créer"]);
+    const create = page.locator('.menu.home button:has-text("Créer")');
+    assert.equal(await create.isDisabled(), true);
+    assert.equal(await create.getAttribute("aria-disabled"), "true");
+    assert.match(await create.textContent(), /Bientôt disponible/);
+    const n = fake.log.length;
+    await create.click({ force: true });          // même forcé, aucun effet
+    await create.dispatchEvent("click");
+    assert.equal(fake.log.length, n, "aucune requête");
+    assert.deepEqual(await homeButtons(page), ["Rejoindre", "Créer"], "on reste sur le même écran");
+    await page.click('.menu.home button:has-text("Rejoindre")');
+    await page.waitForSelector("#vRegister:not([hidden])");
+    assert.equal(await page.evaluate(() => location.hash), "#tournoi");
+    await watch.check(); await ctx.close();
+  });
+
+  test("boutons Retour : Tournoi → Nouvelle partie → Accueil", async () => {
+    const { page, ctx } = await open("", { init: withGame(savedGame) });
+    await page.click('.menu.home button:has-text("Nouvelle partie")');
+    await page.click('.menu.home button:has-text("Tournoi")');
+    await page.click(".homeback");
+    assert.deepEqual(await homeButtons(page), ["Solo", "Tournoi"]);
+    await page.click(".homeback");
+    assert.deepEqual(await homeButtons(page), ["Nouvelle partie", "Continuer la partie"]);
+    assert.equal(await page.$$eval(".homeback", b => b.length), 0, "pas de Retour sur l'accueil");
+    await ctx.close();
   });
 
   test("partie sauvegardée : Continuer reprend exactement la partie", async () => {
     const { page, ctx, watch } = await open("", { init: withGame(savedGame) });
     await page.waitForSelector(".menu.home");
-    assert.deepEqual(await homeButtons(page), ["Nouvelle partie", "Continuer la partie", "Mode tournoi entre amis"]);
+    assert.deepEqual(await homeButtons(page), ["Nouvelle partie", "Continuer la partie"]);
     assert.match(await page.textContent(".menu.home .homesub"), /^Facile · 01:15$/);
     await page.click('.menu.home button:has-text("Continuer la partie")');
     assert.equal(await page.evaluate(() => document.getElementById("overlay").classList.contains("open")), false);
@@ -218,7 +260,7 @@ describe("écran d'accueil", () => {
   test("partie terminée : pas de Continuer", async () => {
     const { page, ctx } = await open("", { init: withGame({ ...savedGame, done: true }) });
     await page.waitForSelector(".menu.home");
-    assert.deepEqual(await homeButtons(page), ["Nouvelle partie", "Mode tournoi entre amis"]);
+    assert.deepEqual(await homeButtons(page), ["Nouvelle partie"]);
     await ctx.close();
   });
 
@@ -243,7 +285,7 @@ describe("écran d'accueil", () => {
       const value = change.raw ?? JSON.stringify({ ...savedGame, ...change });
       const { page, ctx, watch } = await open("", { init: `localStorage.setItem("sdk-game", ${JSON.stringify(value)})` });
       await page.waitForSelector(".menu.home");
-      assert.deepEqual(await homeButtons(page), ["Nouvelle partie", "Mode tournoi entre amis"]);
+      assert.deepEqual(await homeButtons(page), ["Nouvelle partie"]);
       await newGame(page);
       await watch.check(); await ctx.close();
     });
@@ -254,7 +296,7 @@ describe("écran d'accueil", () => {
       Object.defineProperty(window, "localStorage", { get() { throw new DOMException("bloqué", "SecurityError"); } });
     } });
     await page.waitForSelector(".menu.home");
-    assert.deepEqual(await homeButtons(page), ["Nouvelle partie", "Mode tournoi entre amis"]);
+    assert.deepEqual(await homeButtons(page), ["Nouvelle partie"]);
     await newGame(page);
     await page.evaluate(() => { const i = G.puzzle.findIndex(x => !x); selected = i; input(G.solution[i]); });
     assert.ok(await page.evaluate(() => G.values.some((v, i) => v && !G.puzzle[i])));
@@ -288,22 +330,36 @@ describe("écran d'accueil", () => {
     await watch.check(); await ctx.close();
   });
 
-  test("Mode tournoi depuis l'accueil", async () => {
-    const { page, ctx } = await open();
-    await page.click('.menu.home a[href="#tournoi"]');
+  test("partie en cours : Rejoindre un tournoi met le solo en pause, Retour le retrouve", async () => {
+    const { page, ctx, watch } = await open("", { init: withGame(savedGame) });
+    await joinTournament(page);
     await page.waitForSelector("#vRegister:not([hidden])");
-    await ctx.close();
+    assert.equal(await page.evaluate(() => paused), true);
+    await page.click("#tBack");
+    await page.waitForSelector("#app:not([hidden])");
+    assert.equal(await page.evaluate(() => JSON.stringify(G.values)), JSON.stringify(savedGame.values));
+    await watch.check(); await ctx.close();
   });
 });
 
 describe("mode tournoi", () => {
-  test("accès depuis le menu du solo et retour", async () => {
+  test("accès depuis l'accueil et retour à l'accueil", async () => {
     const { page, ctx, watch } = await open();
-    await page.click('a[href="#tournoi"]');
+    await joinTournament(page);
     await page.waitForSelector("#vRegister:not([hidden])");
     assert.equal(await page.isHidden("#app"), true);
     await page.click("#tBack");
     await page.waitForSelector("#app:not([hidden])");
+    assert.deepEqual(await homeButtons(page), ["Nouvelle partie"], "sans partie solo : retour à l'accueil");
+    await watch.check(); await ctx.close();
+  });
+
+  test("accès depuis le menu du solo", async () => {
+    const { page, ctx, watch } = await open();
+    await newGame(page);
+    await page.click("#menuBtn");
+    await page.click('#sheet a[href="#tournoi"]');
+    await page.waitForSelector("#vRegister:not([hidden])");
     await watch.check(); await ctx.close();
   });
 
