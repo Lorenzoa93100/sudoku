@@ -26,6 +26,8 @@ Accès : **Nouvelle partie → Tournoi → Rejoindre**, **Menu → Mode tournoi 
 
 - Connexion avec Discord uniquement (permission `identify` : seul l'identifiant Discord est lu, ni nom, ni e-mail ; compte Discord de 30 jours au moins). Au premier passage, choix d'un pseudo et d'un avatar ; le nom Discord n'est jamais affiché.
 - **Mon compte** : avertissements éventuels, déconnexion (cet appareil ou tous), suppression du compte (pseudo à retaper). Un compte supprimé apparaît « Joueur supprimé » dans les classements.
+- **Tournois entre joueurs** : **Créer** (difficulté facile, moyen ou difficile, 2 à 10 joueurs ; le serveur tire la grille et le nom) donne un code de 10 caractères à partager, ou un lien `…/sudoku/#t=CODE` (le code est retiré de l'adresse dès l'ouverture). Salle d'attente rafraîchie toutes les 3 s (1 s pendant le compte à rebours), suspendue quand la page est cachée. Le créateur lance ; le départ est le même pour tous, fixé par le serveur. Garder la page ouverte : 5 minutes sans nouvelles de l'appareil comptent comme un abandon. Un tournoi n'est visible que de ses participants.
+- **Classement global** (accueil, menu ☰, salon) : top 10 par victoires et ta position, connecté seulement.
 - Une manche = la même grille pour tous, un seul essai. La grille n'arrive qu'au démarrage ; le serveur mesure le temps et valide la grille. Le chrono affiché est indicatif et aucun temps n'est envoyé.
 - Pas d'aides. Une grille fausse indique seulement le nombre d'essais restants, jamais les cases fausses.
 - Classement par manche : rang, avatar, pseudo, temps, victoires ; « classement définitif » quand la manche est terminée.

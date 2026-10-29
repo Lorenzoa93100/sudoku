@@ -91,6 +91,13 @@
       <button class="pill" type="button" id="tAccountBtn">Mon compte</button>
     </div>
     <div class="tgallery" id="tAvGallery" hidden></div>
+    <div class="thead"><h2 class="th2">Tournois</h2></div>
+    <div class="tactions">
+      <button class="pill primary" type="button" id="tGoCreate">Créer un tournoi</button>
+      <button class="pill" type="button" id="tGoJoin">Rejoindre avec un code</button>
+      <button class="pill" type="button" id="tGoRanking">Classement</button>
+    </div>
+    <ul class="trounds" id="tTournaments"></ul>
     <div class="thead"><h2 class="th2">Manches</h2><button class="pill" type="button" id="tRefresh">Actualiser</button></div>
     <ul class="trounds" id="tRounds"></ul>
   </div>
@@ -106,7 +113,8 @@
     </div>
     <div class="pad" id="tPad"></div>
     <p class="tresult" id="tResult" role="status" aria-live="polite" hidden></p>
-    <div class="tactions"><button class="pill" type="button" id="tPlayBack">Retour aux manches</button><button class="pill" type="button" id="tPlayBoard">Classement</button></div>
+    <p class="twarn tabsence" id="tPlayWarn" hidden>Garde la page ouverte : 5 minutes sans nouvelles de ton appareil (écran verrouillé, application en arrière-plan) comptent comme un abandon.</p>
+    <div class="tactions"><button class="pill" type="button" id="tPlayBack">Retour aux manches</button><button class="pill" type="button" id="tPlayBoard">Classement</button><button class="pill danger" type="button" id="tAbandon" hidden>Abandonner</button></div>
   </div>
 
   <div class="tview" id="vBoard" hidden>
@@ -120,6 +128,69 @@
     <p class="sub" id="tBoardCount"></p>
     <div class="tactions"><button class="pill" type="button" id="tBoardBack">Retour aux manches</button></div>
   </div>
+  <div class="tview" id="vCreate" hidden>
+    <h2 class="th2">Créer un tournoi</h2>
+    <p class="sub">Le serveur tire la grille et donne un nom au tournoi. Tu recevras un code à partager.</p>
+    <form id="tCreateForm" novalidate>
+      <p class="tlabel" id="tDiffLabel">Difficulté</p>
+      <div class="tchoices" id="tCreateDiff" role="radiogroup" aria-labelledby="tDiffLabel">
+        <button type="button" role="radio" aria-checked="true" data-diff="facile">Facile</button>
+        <button type="button" role="radio" aria-checked="false" data-diff="moyen">Moyen</button>
+        <button type="button" role="radio" aria-checked="false" data-diff="difficile">Difficile</button>
+      </div>
+      <label class="tlabel" for="tCreatePlayers">Nombre de joueurs maximum</label>
+      <select class="tinput" id="tCreatePlayers">
+        <option value="2">2</option><option value="3">3</option><option value="4" selected>4</option>
+        <option value="5">5</option><option value="6">6</option><option value="7">7</option>
+        <option value="8">8</option><option value="9">9</option><option value="10">10</option>
+      </select>
+      <p class="twarn tabsence">Pendant la partie, garde la page ouverte : 5 minutes sans nouvelles de ton appareil (page fermée, écran verrouillé, application en arrière-plan) comptent comme un abandon.</p>
+      <button class="pill primary tsubmit" type="submit" id="tCreateBtn">Créer le tournoi</button>
+      <button class="linkbtn" type="button" id="tCreateCancel">Annuler</button>
+    </form>
+  </div>
+
+  <div class="tview" id="vJoin" hidden>
+    <h2 class="th2">Rejoindre un tournoi</h2>
+    <p class="sub">Entre le code reçu du créateur du tournoi (10 caractères).</p>
+    <form id="tJoinForm" novalidate>
+      <label class="tlabel" for="tJoinCode">Code du tournoi</label>
+      <input class="codein tinput" id="tJoinCode" maxlength="14" autocomplete="off" autocapitalize="characters" spellcheck="false">
+      <button class="pill primary tsubmit" type="submit" id="tJoinBtn">Rejoindre</button>
+      <button class="linkbtn" type="button" id="tJoinCancel">Annuler</button>
+    </form>
+  </div>
+
+  <div class="tview" id="vRoom" hidden>
+    <h2 class="th2" id="tRoomName"></h2>
+    <p class="sub" id="tRoomInfo"></p>
+    <div class="codebox" id="tRoomCodeBox" hidden>
+      <div><div class="lbl">Code à partager</div><b id="tRoomCode"></b></div>
+      <button class="pill" type="button" id="tRoomShare">Partager</button>
+    </div>
+    <p class="tstate" id="tRoomState"></p>
+    <ul class="tplayers" id="tRoomPlayers"></ul>
+    <p class="twarn tabsence" id="tRoomWarn">Pendant la partie, garde la page ouverte : 5 minutes sans nouvelles de ton appareil (page fermée, écran verrouillé, application en arrière-plan) comptent comme un abandon.</p>
+    <div class="tactions">
+      <button class="pill primary" type="button" id="tRoomStart" hidden>Lancer la partie</button>
+      <button class="pill primary" type="button" id="tRoomPlay" hidden>Reprendre la grille</button>
+      <button class="pill" type="button" id="tRoomLeave">Quitter la salle</button>
+      <button class="pill" type="button" id="tRoomBack">Retour</button>
+    </div>
+  </div>
+
+  <div class="tview" id="vRanking" hidden>
+    <div class="thead"><h2 class="th2">Classement</h2><button class="pill" type="button" id="tRankRefresh">Actualiser</button></div>
+    <p class="sub">Victoires en tournoi et dans les manches. À égalité, la plus ancienne dernière victoire passe devant.</p>
+    <table class="ttable">
+      <thead><tr><th scope="col">Rang</th><th scope="col"><span class="sr">Avatar</span></th><th scope="col">Pseudo</th><th scope="col">Victoires</th></tr></thead>
+      <tbody id="tRankRows"></tbody>
+    </table>
+    <p class="sub" id="tRankEmpty" hidden>Personne n'a encore de victoire.</p>
+    <p class="tstate" id="tRankMe"></p>
+    <div class="tactions"><button class="pill" type="button" id="tRankBack">Retour</button></div>
+  </div>
+
   <div class="tview" id="vAccount" hidden>
     <h2 class="th2">Mon compte</h2>
     <div class="tprofile">

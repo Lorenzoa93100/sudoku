@@ -419,3 +419,16 @@ a.linkbtn{display:inline-block;text-decoration:none}
 .pill.danger:disabled{opacity:.45}
 .twarnlist{margin:0;padding-left:18px;font-size:14px;line-height:1.5}
 .ttable td.tdel{color:var(--muted);font-style:italic}
+
+/* ---------- Tournois (lot 2) ---------- */
+.tchoices{display:flex;gap:8px;flex-wrap:wrap;margin-bottom:6px}
+.tchoices button{border:2px solid transparent;background:var(--surface-2);border-radius:12px;padding:10px 14px;font-weight:600;font-size:15px}
+.tchoices button[aria-checked="true"]{border-color:var(--pen)}
+select.tinput{font-size:16px;padding:10px 12px}
+.tplayers{list-style:none;margin:8px 0;padding:0}
+.tplayers li{display:flex;align-items:center;gap:10px;background:var(--surface);border-radius:12px;padding:8px 12px;margin-bottom:6px}
+.tplayers li.me{outline:2px solid var(--pen)}
+.tplayers .tp{flex:1;min-width:0;font-weight:600}
+.tplayers .tst{color:var(--muted);font-size:13.5px}
+.tabsence{margin:10px 0}
+#tRoomCode{font-size:22px;letter-spacing:2px}

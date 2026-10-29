@@ -618,6 +618,9 @@ function showMenu() {
     <button data-act="stats">Statistiques</button>
     <button data-act="help">Comment marchent les aides</button>
     <a href="#tournoi">Mode tournoi entre amis</a></div>`);
+  // Classement global (tournoi.js) : ajouté par le DOM.
+  const rank = document.createElement("a"); rank.href = "#tournoi-classement"; rank.textContent = "Classement";
+  sheet.querySelector(".menu").append(rank);
 }
 function toggleRow(key, title, desc) { return `<label class="row"><div><div class="t">${title}</div>${desc ? `<div class="d2">${desc}</div>` : ""}</div><input type="checkbox" class="switch" data-set="${key}" ${settings[key] ? "checked" : ""}></label>`; }
 function showSettings() {
@@ -887,9 +890,12 @@ function homeSheet(title, subtitle, buttons, back) {
   }
   sheet.replaceChildren(...parts); overlay.classList.add("open"); overlay.dataset.dismiss = "";
 }
+// Écrans du mode tournoi (tournoi.js) ouverts depuis le solo : simple changement d'adresse.
+function goTournoi(hash) { closeSheet(); location.hash = hash; }
 function showHome(canContinue) {
   const buttons = [homeButton("Nouvelle partie", "", () => showModeChoice(canContinue))];
   if (canContinue) buttons.push(homeButton("Continuer la partie", `${DIFFS[G.key].name} · ${fmt(G.time)}`, closeSheet));
+  buttons.push(homeButton("Classement", "Les meilleurs joueurs des tournois", () => goTournoi("#tournoi-classement")));
   homeSheet("Sudoku", "Que veux-tu faire ?", buttons, null);
 }
 function showModeChoice(canContinue) {
@@ -899,10 +905,8 @@ function showModeChoice(canContinue) {
   ], () => showHome(canContinue));
 }
 function showTournamentChoice(canContinue) {
-  const join = homeButton("Rejoindre", "Avec un code de tournoi", () => { closeSheet(); location.hash = "#tournoi"; });
-  // Pas encore disponible : désactivé, sans action ni requête.
-  const create = homeButton("Créer", "Bientôt disponible", null);
-  create.disabled = true; create.setAttribute("aria-disabled", "true"); create.classList.add("soon");
+  const join = homeButton("Rejoindre", "Avec un code de tournoi", () => goTournoi("#tournoi-rejoindre"));
+  const create = homeButton("Créer", "Choisis la difficulté et le nombre de joueurs", () => goTournoi("#tournoi-creer"));
   homeSheet("Tournoi", "Rejoindre un tournoi ou en créer un.", [join, create], () => showModeChoice(canContinue));
 }
 (function boot() {
@@ -920,6 +924,6 @@ function showTournamentChoice(canContinue) {
     sheet.querySelector("[data-act=playShared]").addEventListener("click", () => startFromCode(shared.code, shared.key));
     return;
   }
-  // Lien direct #tournoi, ou retour de Discord (#login…) : tournoi.js prend la main.
-  if (location.hash !== "#tournoi" && !/^#login(?:_error)?=/.test(location.hash)) showHome(resumable);
+  // Lien direct #tournoi…, lien de tournoi (#t=CODE) ou retour de Discord : tournoi.js prend la main.
+  if (!/^#(?:tournoi|t=|login(?:_error)?=)/.test(location.hash)) showHome(resumable);
 })();

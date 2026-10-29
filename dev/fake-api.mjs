@@ -40,6 +40,7 @@ export function createFakeApi({ clock = () => Date.now(), maxWrong = 5 } = {}) {
   const tokens = new Map();         // token -> userId
   const rounds = new Map();         // id -> { id, difficulty, puzzle, starts_at, ends_at, min_solve_ms }
   const attempts = new Map();       // `${round}:${user}` -> attempt
+  const tournaments = new Map();    // id -> tournoi (voir route POST /v1/tournaments)
   const queued = [];                // réponses forcées pour les prochaines requêtes /v1 (tests)
   const log = [];                   // requêtes reçues : { method, path, origin, body }
   let nextUser = 1, nextRound = 1, nextAttempt = 1;
@@ -65,6 +66,11 @@ export function createFakeApi({ clock = () => Date.now(), maxWrong = 5 } = {}) {
       return `#login=${code}&state=${fingerprint(nonce)}`;
     },
     block(discordId, info) { blocked.set(discordId, info); },
+    countdownMs: 5000,              // compte à rebours des tournois (raccourci dans les tests)
+    tournament(id) { return tournaments.get(id); },
+    // Ajoute un joueur (déjà inscrit) dans un tournoi, comme s'il avait saisi le code.
+    joinTournament(id, uid) { tournaments.get(id).players.set(uid, { status: "lobby", joined_at: clock(), elapsed: null, finished_at: null, wrong: 0 }); },
+    finishPlayer(id, uid, elapsed) { Object.assign(tournaments.get(id).players.get(uid), { status: "solved", elapsed, finished_at: clock() }); },
     deleteUser(id) { const u = users.get(id); Object.assign(u, { pseudo: null, avatar: null, discordId: null, deleted: true }); },
     revokeTokens() { tokens.clear(); },
     addRound({ difficulty = "facile", puzzle = PUZZLE, startsIn = -60_000, duration = 3_600_000, minSolveMs = 0 } = {}) {
@@ -169,6 +175,10 @@ export function createFakeApi({ clock = () => Date.now(), maxWrong = 5 } = {}) {
     if (!uid || users.get(uid).deleted) return json(401, { error: "unauthorized" }, { "www-authenticate": "Bearer" });
     const user = users.get(uid), now = clock();
 
+    if (req.path === "/v1/leaderboard" || req.path.startsWith("/v1/tournaments")) {
+      const r = tournamentApi(req, body, uid, now, strict);
+      if (r) return r;
+    }
     if (route === "GET /v1/me") return json(200, { pseudo: user.pseudo, avatar: user.avatar, created_at: user.created_at,
       wins: wins(now).get(uid) || 0, warnings: user.warnings });
     if (route === "POST /v1/auth/logout") { tokens.delete(t); return json(200, { ok: true }); }
@@ -242,6 +252,119 @@ export function createFakeApi({ clock = () => Date.now(), maxWrong = 5 } = {}) {
       return { status: 200, headers: { "content-type": "text/event-stream" }, body: out };
     }
     if (route === "POST /v1/probe/echo" && body && Number.isInteger(body.t)) return json(200, { t: body.t, server: clock() });
+    return json(404, { error: "not_found" });
+  }
+  // --- Tournois : même comportement visible que l'API (privé, départ commun, grille après le départ).
+  const CODE_ABC = "ABCDEFGHJKMNPQRSTUVWXYZ23456789";
+  let nextTournament = 1;
+  function tRefresh(t, now) {
+    if (t.state === "lobby" && now >= t.created_at + 15 * 60_000) t.state = "expired";
+    if (t.state === "running" && now >= t.starts_at) {
+      if (now >= t.ends_at) for (const p of t.players.values()) if (p.status === "playing") p.status = "expired";
+      if (![...t.players.values()].some(p => p.status === "playing")) {
+        t.state = "finished";
+        t.winner_counted = [...t.players.values()].filter(p => p.status === "solved").length >= 2;
+      }
+    }
+  }
+  function tView(t, uid, now) {
+    const entries = [...t.players.entries()];
+    const solved = entries.filter(([, p]) => p.status === "solved").sort((a, b) => a[1].elapsed - b[1].elapsed);
+    const order = [...solved, ...entries.filter(([, p]) => p.status !== "solved").sort((a, b) => a[1].joined_at - b[1].joined_at)];
+    const players = order.map(([id, p]) => {
+      const u = users.get(id), k = solved.findIndex(([x]) => x === id);
+      return { pseudo: u.pseudo, avatar: u.avatar, deleted: u.deleted, status: p.status, me: id === uid,
+               creator: id === t.creator, rank: k >= 0 ? k + 1 : null, elapsed_ms: k >= 0 ? p.elapsed : null };
+    });
+    const mine = t.players.get(uid);
+    const out = { id: t.id, name: t.name, difficulty: t.difficulty, max_players: t.max_players, state: t.state, now,
+      is_creator: t.creator === uid, code: t.state === "lobby" ? t.code : null,
+      lobby_expires_at: t.state === "lobby" ? t.created_at + 15 * 60_000 : null, starts_at: t.starts_at, ends_at: t.ends_at,
+      players, my_status: mine.status, under_review: false, attempts_left: maxWrong - mine.wrong, absence_s: 300,
+      winner_counted: t.state === "finished" ? t.winner_counted : null };
+    if ((t.state === "running" || t.state === "finished") && now >= t.starts_at) out.puzzle = t.puzzle;
+    return out;
+  }
+  function tournamentApi(req, body, uid, now, strict) {
+    const route = `${req.method} ${req.path.replace(/\/\d+(\/|$)/, "/:id$1")}`;
+    const tid = Number((/^\/v1\/tournaments\/(\d+)/.exec(req.path) || [])[1]);
+    if (route === "GET /v1/leaderboard") {
+      if (fake.leaderboard) return json(200, fake.leaderboard(uid));
+      const wins = new Map();
+      for (const t of tournaments.values()) {
+        if (t.state !== "finished" || !t.winner_counted) continue;
+        const w = [...t.players.entries()].filter(([, p]) => p.status === "solved").sort((a, b) => a[1].elapsed - b[1].elapsed)[0][0];
+        wins.set(w, (wins.get(w) || 0) + 1);
+      }
+      const order = [...wins.entries()].sort((a, b) => b[1] - a[1]);
+      const entries = order.slice(0, 10).map(([id, n], k) => { const u = users.get(id);
+        return { rank: k + 1, pseudo: u.pseudo, avatar: u.avatar, wins: n, deleted: u.deleted, me: id === uid }; });
+      const k = order.findIndex(([id]) => id === uid);
+      return json(200, { entries, players: order.length, me: { rank: k >= 0 ? k + 1 : null, wins: wins.get(uid) || 0 } });
+    }
+    if (route === "POST /v1/tournaments") {
+      if (!strict(["difficulty", "max_players"], ["difficulty", "max_players"]) || !["facile", "moyen", "difficile"].includes(body.difficulty)
+        || !Number.isInteger(body.max_players) || body.max_players < 2 || body.max_players > 10) return json(422, { error: "invalid_request" });
+      if ([...tournaments.values()].some(t => ["lobby", "running"].includes(t.state) && ["lobby", "playing"].includes((t.players.get(uid) || {}).status)))
+        return json(409, { error: "already_in_tournament" });
+      const id = nextTournament++;
+      const code = [...crypto.getRandomValues(new Uint8Array(10))].map(x => CODE_ABC[x % CODE_ABC.length]).join("");
+      const t = { id, code, name: "Renard rusé", difficulty: body.difficulty, max_players: body.max_players, creator: uid,
+                  state: "lobby", puzzle: PUZZLE, created_at: now, starts_at: null, ends_at: null, players: new Map(), winner_counted: null };
+      tournaments.set(id, t); fake.joinTournament(id, uid);
+      return json(201, tView(t, uid, now));
+    }
+    if (route === "POST /v1/tournaments/join") {
+      if (!strict(["code"], ["code"]) || typeof body.code !== "string") return json(422, { error: "invalid_request" });
+      const t = [...tournaments.values()].find(x => x.code === body.code.replace(/[\s-]/g, "").toUpperCase());
+      if (!t) return json(404, { error: "not_found" });
+      tRefresh(t, now);
+      if (!t.players.has(uid)) {
+        if (t.state !== "lobby") return json(409, { error: "tournament_closed" });
+        if (t.players.size >= t.max_players) return json(409, { error: "tournament_full" });
+        fake.joinTournament(t.id, uid);
+      }
+      return json(200, tView(t, uid, now));
+    }
+    if (route === "GET /v1/tournaments") {
+      const list = [...tournaments.values()].filter(t => t.players.has(uid) && !["expired", "cancelled"].includes(t.state))
+        .sort((a, b) => b.created_at - a.created_at).map(t => ({ id: t.id, name: t.name, difficulty: t.difficulty, state: t.state,
+          created_at: t.created_at, starts_at: t.starts_at, players: t.players.size, max_players: t.max_players, my_status: t.players.get(uid).status }));
+      return json(200, { now, tournaments: list });
+    }
+    const t = tournaments.get(tid);
+    if (!t || !t.players.has(uid)) return tid ? json(404, { error: "not_found" }) : null;
+    tRefresh(t, now);
+    const me = t.players.get(uid);
+    if (route === "GET /v1/tournaments/:id") return json(200, tView(t, uid, now));
+    if (route === "POST /v1/tournaments/:id/start") {
+      if (t.creator !== uid) return json(403, { error: "not_creator" });
+      if (t.state !== "lobby") return json(409, { error: "tournament_closed" });
+      if (t.players.size < 2) return json(409, { error: "not_enough_players" });
+      Object.assign(t, { state: "running", starts_at: now + fake.countdownMs, ends_at: now + fake.countdownMs + 20 * 60_000 });
+      for (const p of t.players.values()) p.status = "playing";
+      return json(200, tView(t, uid, now));
+    }
+    if (route === "POST /v1/tournaments/:id/leave") {
+      if (t.state === "lobby") {
+        if (t.creator === uid) { t.state = "cancelled"; return json(200, { result: "cancelled" }); }
+        t.players.delete(uid); return json(200, { result: "left" });
+      }
+      if (t.state === "running" && me.status === "playing") { me.status = "abandoned"; tRefresh(t, now); return json(200, { result: "abandoned" }); }
+      return json(409, { error: "already_finished" });
+    }
+    if (route === "POST /v1/tournaments/:id/submit") {
+      if (!strict(["grid"], ["grid"]) || typeof body.grid !== "string" || !/^[1-9]{81}$/.test(body.grid)) return json(422, { error: "invalid_request" });
+      if (t.state !== "running" || now < t.starts_at) return json(409, { error: "not_started" });
+      if (me.status !== "playing") return json(409, { error: "already_finished" });
+      if (isValidCompletion(t.puzzle, body.grid)) {
+        Object.assign(me, { status: "solved", elapsed: now - t.starts_at, finished_at: now }); tRefresh(t, now);
+        return json(200, { result: "solved", elapsed_ms: me.elapsed, under_review: false });
+      }
+      me.wrong++;
+      if (me.wrong >= maxWrong) { me.status = "failed"; tRefresh(t, now); return json(200, { result: "failed" }); }
+      return json(200, { result: "incorrect", attempts_left: maxWrong - me.wrong });
+    }
     return json(404, { error: "not_found" });
   }
   function state(r, now) { return now < r.starts_at ? "upcoming" : now < r.ends_at ? "open" : "closed"; }

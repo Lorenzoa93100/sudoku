@@ -223,10 +223,10 @@ describe("écran d'accueil", () => {
   });
   const withGame = value => `localStorage.setItem("sdk-game", ${JSON.stringify(typeof value === "string" ? value : JSON.stringify(value))})`;
 
-  test("aucune partie : Nouvelle partie seule, sans Continuer ni Mode tournoi", async () => {
+  test("aucune partie : Nouvelle partie et Classement, sans Continuer ni Mode tournoi", async () => {
     const { page, ctx, watch } = await open();
     await page.waitForSelector(".menu.home");
-    assert.deepEqual(await homeButtons(page), ["Nouvelle partie"]);
+    assert.deepEqual(await homeButtons(page), ["Nouvelle partie", "Classement"]);
     assert.equal(await page.$$eval('#sheet a[href="#tournoi"]', a => a.length), 0, "plus de lien tournoi sur l'accueil");
     assert.equal(await page.evaluate(() => document.getElementById("overlay").dataset.dismiss), "", "pas de fermeture sans choix");
     await page.click('.menu.home button:has-text("Nouvelle partie")');
@@ -236,22 +236,15 @@ describe("écran d'accueil", () => {
     await watch.check(); await ctx.close();
   });
 
-  test("Nouvelle partie → Tournoi : Rejoindre ouvre les écrans tournoi, Créer est inactif", async () => {
+  test("Nouvelle partie → Tournoi : Rejoindre et Créer mènent aux écrans tournoi (connexion d'abord)", async () => {
     const { page, ctx, watch } = await open();
     await page.click('.menu.home button:has-text("Nouvelle partie")');
     await page.click('.menu.home button:has-text("Tournoi")');
     assert.deepEqual(await homeButtons(page), ["Rejoindre", "Créer"]);
-    const create = page.locator('.menu.home button:has-text("Créer")');
-    assert.equal(await create.isDisabled(), true);
-    assert.equal(await create.getAttribute("aria-disabled"), "true");
-    assert.match(await create.textContent(), /Bientôt disponible/);
-    const n = fake.log.length;
-    await create.click({ force: true });          // même forcé, aucun effet
-    await create.dispatchEvent("click");
-    assert.equal(fake.log.length, n, "aucune requête");
-    assert.deepEqual(await homeButtons(page), ["Rejoindre", "Créer"], "on reste sur le même écran");
-    await page.click('.menu.home button:has-text("Rejoindre")');
+    assert.equal(await page.locator('.menu.home button:has-text("Créer")').isDisabled(), false);
+    await page.click('.menu.home button:has-text("Créer")');
     await page.waitForSelector("#vLogin:not([hidden])");
+    await msg(page).getByText("Connecte-toi pour continuer").waitFor();
     assert.equal(await page.evaluate(() => location.hash), "#tournoi");
     await watch.check(); await ctx.close();
   });
@@ -263,7 +256,7 @@ describe("écran d'accueil", () => {
     await page.click(".homeback");
     assert.deepEqual(await homeButtons(page), ["Solo", "Tournoi"]);
     await page.click(".homeback");
-    assert.deepEqual(await homeButtons(page), ["Nouvelle partie", "Continuer la partie"]);
+    assert.deepEqual(await homeButtons(page), ["Nouvelle partie", "Continuer la partie", "Classement"]);
     assert.equal(await page.$$eval(".homeback", b => b.length), 0, "pas de Retour sur l'accueil");
     await ctx.close();
   });
@@ -271,7 +264,7 @@ describe("écran d'accueil", () => {
   test("partie sauvegardée : Continuer reprend exactement la partie", async () => {
     const { page, ctx, watch } = await open("", { init: withGame(savedGame) });
     await page.waitForSelector(".menu.home");
-    assert.deepEqual(await homeButtons(page), ["Nouvelle partie", "Continuer la partie"]);
+    assert.deepEqual(await homeButtons(page), ["Nouvelle partie", "Continuer la partie", "Classement"]);
     assert.match(await page.textContent(".menu.home .homesub"), /^Facile · 01:15$/);
     await page.click('.menu.home button:has-text("Continuer la partie")');
     assert.equal(await page.evaluate(() => document.getElementById("overlay").classList.contains("open")), false);
@@ -283,7 +276,7 @@ describe("écran d'accueil", () => {
   test("partie terminée : pas de Continuer", async () => {
     const { page, ctx } = await open("", { init: withGame({ ...savedGame, done: true }) });
     await page.waitForSelector(".menu.home");
-    assert.deepEqual(await homeButtons(page), ["Nouvelle partie"]);
+    assert.deepEqual(await homeButtons(page), ["Nouvelle partie", "Classement"]);
     await ctx.close();
   });
 
@@ -308,7 +301,7 @@ describe("écran d'accueil", () => {
       const value = change.raw ?? JSON.stringify({ ...savedGame, ...change });
       const { page, ctx, watch } = await open("", { init: `localStorage.setItem("sdk-game", ${JSON.stringify(value)})` });
       await page.waitForSelector(".menu.home");
-      assert.deepEqual(await homeButtons(page), ["Nouvelle partie"]);
+      assert.deepEqual(await homeButtons(page), ["Nouvelle partie", "Classement"]);
       await newGame(page);
       await watch.check(); await ctx.close();
     });
@@ -319,7 +312,7 @@ describe("écran d'accueil", () => {
       Object.defineProperty(window, "localStorage", { get() { throw new DOMException("bloqué", "SecurityError"); } });
     } });
     await page.waitForSelector(".menu.home");
-    assert.deepEqual(await homeButtons(page), ["Nouvelle partie"]);
+    assert.deepEqual(await homeButtons(page), ["Nouvelle partie", "Classement"]);
     await newGame(page);
     await page.evaluate(() => { const i = G.puzzle.findIndex(x => !x); selected = i; input(G.solution[i]); });
     assert.ok(await page.evaluate(() => G.values.some((v, i) => v && !G.puzzle[i])));
@@ -373,7 +366,7 @@ describe("mode tournoi", () => {
     assert.equal(await page.isHidden("#app"), true);
     await page.click("#tBack");
     await page.waitForSelector("#app:not([hidden])");
-    assert.deepEqual(await homeButtons(page), ["Nouvelle partie"], "sans partie solo : retour à l'accueil");
+    assert.deepEqual(await homeButtons(page), ["Nouvelle partie", "Classement"], "sans partie solo : retour à l'accueil");
     await watch.check(); await ctx.close();
   });
 
@@ -749,3 +742,176 @@ describe("mode tournoi", () => {
     await ctx.close();
   });
 });
+
+describe("tournois créés par les joueurs", () => {
+  const as = (user, path = "#tournoi") =>
+    open(path, { init: `localStorage.setItem(${JSON.stringify(TOKEN_KEY)}, ${JSON.stringify(user.token)})` });
+  const roomPlayers = page => page.$$eval("#tRoomPlayers li .tp", l => l.map(e => e.childNodes[0].textContent));
+
+  test("créer, partager, rejoindre par lien, départ commun, partie, résultats", async () => {
+    fake.countdownMs = 1500;
+    const alice = fake.addUser("Alice", "dragon"), bob = fake.addUser("Bob", "lion");
+    const A = await as(alice), B = { ...(await as(bob, "")) };
+    A.page.on("dialog", d => d.accept());
+    await A.page.click("#tGoCreate");
+    await A.page.click('#tCreateDiff [data-diff="moyen"]');
+    await A.page.selectOption("#tCreatePlayers", "3");
+    await A.page.click("#tCreateBtn");
+    await A.page.waitForSelector("#vRoom:not([hidden])");
+    const create = fake.log.find(r => r.path === "/v1/tournaments" && r.method === "POST");
+    assert.deepEqual(JSON.parse(create.body), { difficulty: "moyen", max_players: 3 });
+    const code = await A.page.textContent("#tRoomCode");
+    assert.match(code, /^[A-HJKMNP-Z2-9]{10}$/);
+    assert.equal(await A.page.isDisabled("#tRoomStart"), true, "1 seul joueur");
+    assert.match(await A.page.textContent("#tRoomWarn"), /5 minutes .* écran verrouillé/);
+    // Bob arrive par le lien partagé : le code disparaît aussitôt de l'adresse.
+    await B.page.goto(`${servers.url}#t=${code}`);
+    await B.page.waitForSelector("#vRoom:not([hidden])");
+    assert.equal(await B.page.evaluate(() => location.hash), "#tournoi");
+    assert.deepEqual(JSON.parse(fake.log.find(r => r.path === "/v1/tournaments/join").body), { code });
+    assert.equal(await B.page.isHidden("#tRoomStart"), true, "seul le créateur lance");
+    // La salle d'Alice se met à jour seule.
+    await A.page.waitForFunction(() => document.querySelectorAll("#tRoomPlayers li").length === 2, null, { timeout: 6000 });
+    assert.deepEqual(await roomPlayers(A.page), ["Alice", "Bob"]);
+    await A.page.click("#tRoomStart");
+    await A.page.locator("#tRoomState").getByText("Départ dans").waitFor();
+    // Même départ pour les deux, puis passage automatique à la grille.
+    for (const X of [A, B]) await X.page.waitForSelector("#vPlay:not([hidden])", { timeout: 8000 });
+    assert.equal(await A.page.isVisible("#tPlayWarn"), true);
+    await fillGrid(B.page, SOLUTION);
+    await B.page.click("#tSubmit");
+    await B.page.locator("#tResult").getByText("Grille correcte").waitFor();
+    // Alice abandonne (confirmation) : un seul résolu, pas de vainqueur.
+    await A.page.click("#tAbandon");
+    await A.page.waitForSelector("#vRoom:not([hidden])");
+    await A.page.locator("#tRoomState").getByText("Pas de vainqueur").waitFor();
+    const statuses = await A.page.$$eval("#tRoomPlayers li > .tst", l => l.map(e => e.textContent));
+    assert.equal(statuses.length, 2);
+    assert.match(statuses[0], /^1ᵉ · 0:0\d,\d$/);  // Bob, temps mesuré depuis le départ commun
+    assert.equal(statuses[1], "abandon");
+    for (const X of [A, B]) { await X.watch.check(); await X.ctx.close(); }
+  });
+
+  test("rejoindre : code mal formé (aucune requête), code inconnu, tournoi complet", async () => {
+    const owner = fake.addUser("Owner"), other = fake.addUser("Other");
+    const { page, ctx, watch } = await loggedIn();
+    await page.click("#tGoJoin");
+    await page.fill("#tJoinCode", "ABC");
+    await page.click("#tJoinBtn");
+    await msg(page).getByText("Le code fait 10 caractères").waitFor();
+    assert.equal(fake.log.filter(r => r.path === "/v1/tournaments/join").length, 0);
+    await page.fill("#tJoinCode", "zzzz-zzzz-zz");
+    await page.click("#tJoinBtn");
+    await msg(page).getByText("Code inconnu").waitFor();
+    assert.deepEqual(JSON.parse(fake.log.find(r => r.path === "/v1/tournaments/join").body), { code: "ZZZZZZZZZZ" });
+    const t = await (async () => {
+      const r = fake.handle({ method: "POST", path: "/v1/tournaments", headers: { origin: FRONT_ORIGIN, authorization: `Bearer ${owner.token}`, "content-type": "application/json" },
+                             body: JSON.stringify({ difficulty: "facile", max_players: 2 }) });
+      return JSON.parse(r.body);
+    })();
+    fake.joinTournament(t.id, other.id);
+    await page.fill("#tJoinCode", t.code);
+    await page.click("#tJoinBtn");
+    await msg(page).getByText("Ce tournoi est complet").waitFor();
+    await watch.check(); await ctx.close();
+  });
+
+  test("salle : un joueur la quitte, le créateur la ferme", async () => {
+    const alice = fake.addUser("Alice"), bob = fake.addUser("Bob");
+    const A = await as(alice), B = await as(bob);
+    A.page.on("dialog", d => d.accept());
+    await A.page.click("#tGoCreate"); await A.page.click("#tCreateBtn");
+    await A.page.waitForSelector("#vRoom:not([hidden])");
+    const code = await A.page.textContent("#tRoomCode");
+    await B.page.click("#tGoJoin"); await B.page.fill("#tJoinCode", code); await B.page.click("#tJoinBtn");
+    await B.page.waitForSelector("#vRoom:not([hidden])");
+    assert.equal(await B.page.textContent("#tRoomLeave"), "Quitter la salle");
+    await B.page.click("#tRoomLeave");
+    await B.page.waitForSelector("#vLobby:not([hidden])");
+    await msg(B.page).getByText("Tu as quitté la salle").waitFor();
+    assert.equal(await A.page.textContent("#tRoomLeave"), "Fermer la salle");
+    await A.page.click("#tRoomLeave");
+    await msg(A.page).getByText("Salle fermée").waitFor();
+    await A.ctx.close(); await B.ctx.close();
+  });
+
+  test("rafraîchissement suspendu quand la page est cachée, relancé à son retour", async () => {
+    const { page, ctx } = await loggedIn();
+    await page.click("#tGoCreate"); await page.click("#tCreateBtn");
+    await page.waitForSelector("#vRoom:not([hidden])");
+    const polls = () => fake.log.filter(r => r.method === "GET" && /^\/v1\/tournaments\/\d+$/.test(r.path)).length;
+    await page.waitForFunction(() => true);
+    await page.waitForTimeout(3500);
+    assert.ok(polls() >= 1, "rafraîchi toutes les 3 s");
+    await page.evaluate(() => { Object.defineProperty(document, "hidden", { configurable: true, get: () => true }); document.dispatchEvent(new Event("visibilitychange")); });
+    const n = polls();
+    await page.waitForTimeout(4000);
+    assert.equal(polls(), n, "aucune requête page cachée");
+    await page.evaluate(() => { Object.defineProperty(document, "hidden", { configurable: true, get: () => false }); document.dispatchEvent(new Event("visibilitychange")); });
+    await page.waitForFunction(() => true);
+    await page.waitForTimeout(500);
+    assert.equal(polls(), n + 1, "requête immédiate au retour");
+    await ctx.close();
+  });
+
+  test("classement global : depuis l'accueil et le menu ☰, ma position", async () => {
+    const alice = fake.addUser("Alice", "dragon");
+    fake.leaderboard = uid => ({ players: 12, me: { rank: uid === alice.id ? 12 : null, wins: 1 },
+      entries: [{ rank: 1, pseudo: "Zoé", avatar: "lion", wins: 9, deleted: false, me: false },
+                { rank: 2, pseudo: null, avatar: null, wins: 7, deleted: true, me: false }] });
+    const { page, ctx, watch } = await as(alice, "");
+    await page.click('.menu.home button:has-text("Classement")');
+    await page.waitForSelector("#vRanking:not([hidden])");
+    const rows = await page.$$eval("#tRankRows tr", trs => trs.map(tr => [...tr.children].map(td => td.textContent)));
+    assert.deepEqual(rows, [["1", "🦁", "Zoé", "9"], ["2", "👤", "Joueur supprimé", "7"]]);
+    assert.match(await page.textContent("#tRankMe"), /12ᵉ sur 12 \(1 victoire\)/);
+    await page.click("#tBack");
+    await page.waitForSelector("#app:not([hidden])");
+    await page.click('.menu.home button:has-text("Nouvelle partie")');
+    await page.click('.menu.home button:has-text("Solo")');
+    await page.click('[data-new="facile"]');
+    await page.click("#menuBtn");
+    await page.click('#sheet a[href="#tournoi-classement"]');
+    await page.waitForSelector("#vRanking:not([hidden])");
+    await watch.check(); await ctx.close();
+  });
+
+  test("classement sans être connecté : connexion d'abord, puis le classement", async () => {
+    fake.leaderboard = () => ({ players: 0, me: { rank: null, wins: 0 }, entries: [] });
+    const { page, ctx } = await open("#tournoi-classement");
+    await page.waitForSelector("#vLogin:not([hidden])");
+    assert.equal(fake.log.filter(r => r.path === "/v1/leaderboard").length, 0);
+    await register(page);
+    await page.waitForSelector("#vRanking:not([hidden])");
+    await page.locator("#tRankMe").getByText("pas encore de victoire").waitFor();
+    await ctx.close();
+  });
+
+  test("lien #t=CODE sans être connecté : connexion Discord puis arrivée dans la salle", async () => {
+    const owner = fake.addUser("Owner");
+    const r = fake.handle({ method: "POST", path: "/v1/tournaments", headers: { origin: FRONT_ORIGIN, authorization: `Bearer ${owner.token}`, "content-type": "application/json" },
+                           body: JSON.stringify({ difficulty: "facile", max_players: 4 }) });
+    const { code } = JSON.parse(r.body);
+    const { page, ctx, watch } = await open(`#t=${code}`);
+    await page.waitForSelector("#vLogin:not([hidden])");
+    assert.equal(await page.evaluate(() => location.hash), "#tournoi");
+    await register(page, { pseudo: "Nouveau" });
+    await page.waitForSelector("#vRoom:not([hidden])");
+    assert.deepEqual(await roomPlayers(page), ["Owner", "Nouveau"]);
+    await watch.check(); await ctx.close();
+  });
+
+  test("salon : mes tournois listés, réouverture de la salle", async () => {
+    const alice = fake.addUser("Alice");
+    const { page, ctx } = await as(alice);
+    await page.click("#tGoCreate"); await page.click("#tCreateBtn");
+    await page.waitForSelector("#vRoom:not([hidden])");
+    await page.click("#tRoomBack");
+    await page.waitForSelector("#vLobby:not([hidden])");
+    assert.match(await page.textContent("#tTournaments"), /Renard rusé · Facile.*Salle d'attente.*1\/4 joueurs/);
+    await page.click('#tTournaments button:has-text("Ouvrir")');
+    await page.waitForSelector("#vRoom:not([hidden])");
+    await ctx.close();
+  });
+});
+
