@@ -39,6 +39,9 @@ export function createFakeApi({ clock = () => Date.now(), maxWrong = 5 } = {}) {
 
   const fake = {
     log,
+    // Sonde du lot 0 : secret attendu (null = sonde fermée) et nombre de ticks d'un flux.
+    probeSecret: null,
+    probeTicks: 5,
     addInvite(code = randomToken(32)) { invites.set(code, null); return code; },
     addUser(pseudo, avatar = "chat") {
       const id = nextUser++; users.set(id, { pseudo, avatar });
@@ -120,6 +123,7 @@ export function createFakeApi({ clock = () => Date.now(), maxWrong = 5 } = {}) {
       const t = randomToken(43); tokens.set(t, uid);
       return json(201, { token: t, pseudo: users.get(uid).pseudo, avatar: users.get(uid).avatar });
     }
+    if (req.path.startsWith("/v1/probe/")) return probe(req, route, body);
     const [scheme, t] = (req.headers.authorization || "").split(" ");
     const uid = scheme === "Bearer" && RE_TOKEN.test(t || "") ? tokens.get(t) : undefined;
     if (!uid) return json(401, { error: "unauthorized" }, { "www-authenticate": "Bearer" });
@@ -173,6 +177,20 @@ export function createFakeApi({ clock = () => Date.now(), maxWrong = 5 } = {}) {
       const participants = [...attempts.values()].filter(a => a.round === rid).length;
       return json(200, { round_id: rid, state: state(r, now), participants, entries });
     }
+    return json(404, { error: "not_found" });
+  }
+  // Sonde : même 404 qu'une route inconnue sans le bon secret ; le flux est servi d'un bloc
+  // (quelques ticks puis « end »), ce qui suffit à tester l'analyse côté page.
+  function probe(req, route, body) {
+    const [scheme, secret] = (req.headers.authorization || "").split(" ");
+    if (scheme !== "Probe" || !fake.probeSecret || secret !== fake.probeSecret) return json(404, { error: "not_found" });
+    if (route === "GET /v1/probe/stream") {
+      let out = "retry: 2000\n: ouverture\n\n";
+      for (let k = 1; k <= fake.probeTicks; k++) out += `id: ${k}\nevent: tick\ndata: ${JSON.stringify({ seq: k, t: clock(), pad: "" })}\n\n`;
+      out += 'event: end\ndata: {"reason":"closed"}\n\n';
+      return { status: 200, headers: { "content-type": "text/event-stream" }, body: out };
+    }
+    if (route === "POST /v1/probe/echo" && body && Number.isInteger(body.t)) return json(200, { t: body.t, server: clock() });
     return json(404, { error: "not_found" });
   }
   function state(r, now) { return now < r.starts_at ? "upcoming" : now < r.ends_at ? "open" : "closed"; }
