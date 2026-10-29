@@ -23,7 +23,13 @@ const AVATARS = {
   abeille: "🐝", papillon: "🦋", licorne: "🦄", dragon: "🐉", fusee: "🚀", etoile: "⭐", cactus: "🌵"
 };
 const DIFF_NAMES = { facile: "Facile", moyen: "Moyen", difficile: "Difficile", expert: "Expert", extreme: "Extrême" };
-const RE_TOKEN = /^[A-Za-z0-9_-]{43}$/, RE_INVITE = /^[A-Za-z0-9_-]{32}$/, RE_PSEUDO = /^[A-Za-z0-9_-]{3,20}$/;
+const RE_TOKEN = /^[A-Za-z0-9_-]{43}$/, RE_PSEUDO = /^[A-Za-z0-9_-]{3,20}$/;
+// Connexion Discord : seule destination de navigation acceptée pour l'URL rendue par l'API.
+const DISCORD_AUTHORIZE = "https://discord.com/oauth2/authorize?";
+// Connexion en cours (nonce tiré ici), gardée dans sessionStorage : propre à cet onglet.
+const LOGIN_KEY = "sudoku-tournoi-connexion";
+const LOGIN_TTL_MS = 10 * 60 * 1000;
+const REASONS = { cheating: "triche", pseudo: "pseudo inapproprié", abuse: "abus", multi_account: "comptes multiples", other: "autre raison" };
 const GENERIC = "Une erreur est survenue. Réessaie plus tard.";
 
 /* ---------- Stockage (localStorage, ou mémoire s'il est indisponible) ---------- */
@@ -44,12 +50,20 @@ const storage = (() => {
     del(k) { mem.delete(k); if (persistent) { try { localStorage.removeItem(k); } catch (e) { /* rien */ } } }
   };
 })();
+// sessionStorage : connexion en cours seulement (nonce), jamais le jeton.
+const session = {
+  get(k) { try { return sessionStorage.getItem(k); } catch (e) { return null; } },
+  set(k, v) { try { sessionStorage.setItem(k, v); return sessionStorage.getItem(k) === v; } catch (e) { return false; } },
+  del(k) { try { sessionStorage.removeItem(k); } catch (e) { /* rien */ } }
+};
 let token = storage.get(TOKEN_KEY);
 if (token && !RE_TOKEN.test(token)) { storage.del(TOKEN_KEY); token = null; }
 
 /* ---------- Appels à l'API ---------- */
 class ApiError extends Error {
-  constructor(kind, status = 0, code = null, wait = 0) { super(kind); this.kind = kind; this.status = status; this.code = code; this.wait = wait; }
+  constructor(kind, status = 0, code = null, wait = 0, data = null) {
+    super(kind); this.kind = kind; this.status = status; this.code = code; this.wait = wait; this.data = data;
+  }
 }
 let cooldownUntil = 0;
 async function api(method, path, body) {
@@ -82,15 +96,20 @@ async function api(method, path, body) {
     cooldownUntil = Date.now() + wait * 1000;
     throw new ApiError("rate", 429, code, wait);
   }
-  throw new ApiError("http", res.status, code);
+  throw new ApiError("http", res.status, code, 0, data);
 }
 
 // Codes d'erreur connus → message. Un texte venu du serveur n'est jamais affiché tel quel.
 const CODE_MESSAGES = {
-  invalid_invite: "Code d'invitation invalide, déjà utilisé ou révoqué.",
   pseudo_taken: "Ce pseudo est déjà pris.",
-  pseudo_required: "Choisis un pseudo.",
-  avatar_required: "Choisis un avatar.",
+  pseudo_forbidden: "Ce pseudo n'est pas accepté. Choisis-en un autre.",
+  invalid_code: "La connexion a expiré. Recommence avec « Se connecter avec Discord ».",
+  invalid_ticket: "La connexion a expiré. Recommence avec « Se connecter avec Discord ».",
+  account_exists: "Ce compte Discord a déjà un compte de jeu. Reconnecte-toi.",
+  signups_closed: "Les inscriptions sont fermées pour le moment (trop de nouveaux comptes). Réessaie plus tard.",
+  login_unavailable: "La connexion est indisponible pour le moment. Réessaie plus tard.",
+  maintenance: "Le site est en maintenance. Réessaie dans quelques minutes.",
+  confirmation_mismatch: "Le pseudo retapé ne correspond pas.",
   invalid_request: "Le serveur a refusé ces données.",
   round_not_found: "Cette manche n'existe pas.",
   round_not_open: "Cette manche n'a pas encore commencé.",
@@ -102,6 +121,7 @@ function messageFor(err) {
   if (!(err instanceof ApiError)) return GENERIC;
   if (err.kind === "config") return "Mode tournoi indisponible : adresse du serveur introuvable.";
   if (err.kind === "network") return "Serveur injoignable. Vérifie ta connexion, puis réessaie.";
+  if (err.kind === "rate" && err.code === "signups_closed") return CODE_MESSAGES.signups_closed;
   if (err.kind === "rate") return `Trop de requêtes. Patiente ${err.wait} s avant de réessayer.`;
   if (err.kind === "unexpected") return "Réponse inattendue du serveur. Réessaie plus tard.";
   if (err.code && CODE_MESSAGES[err.code]) return CODE_MESSAGES[err.code];
@@ -114,7 +134,12 @@ function messageFor(err) {
 const isCount = n => Number.isSafeInteger(n) && n >= 0;
 const isText = (s, max) => typeof s === "string" && s.length > 0 && s.length <= max;
 function check(ok) { if (!ok) throw new ApiError("unexpected"); }
-function checkMe(d) { check(isText(d.pseudo, 40) && isText(d.avatar, 32) && isCount(d.wins)); return d; }
+function checkMe(d) {
+  check(isText(d.pseudo, 40) && isText(d.avatar, 32) && isCount(d.wins) && isCount(d.created_at)
+    && Array.isArray(d.warnings) && d.warnings.length <= 10);
+  for (const w of d.warnings) check(w && isCount(w.created_at) && typeof w.reason === "string");
+  return d;
+}
 function checkRounds(d) {
   check(isCount(d.now) && Array.isArray(d.rounds) && d.rounds.length <= 200);
   for (const r of d.rounds) {
@@ -139,7 +164,11 @@ function checkSubmit(d) {
 function checkBoard(d) {
   check(isCount(d.round_id) && ["upcoming", "open", "closed"].includes(d.state) && isCount(d.participants)
     && Array.isArray(d.entries) && d.entries.length <= 500);
-  for (const e of d.entries) check(e && isCount(e.rank) && isText(e.pseudo, 40) && isText(e.avatar, 32) && isCount(e.elapsed_ms) && isCount(e.wins));
+  for (const e of d.entries) {
+    // Compte supprimé : pseudo et avatar à null, affiché « Joueur supprimé ».
+    check(e && isCount(e.rank) && isCount(e.elapsed_ms) && isCount(e.wins) && typeof e.deleted === "boolean"
+      && (e.deleted ? e.pseudo === null && e.avatar === null : isText(e.pseudo, 40) && isText(e.avatar, 32)));
+  }
   return d;
 }
 
@@ -163,7 +192,7 @@ function fmtClock(ms) {
 const dateFmt = new Intl.DateTimeFormat("fr-FR", { weekday: "short", day: "numeric", month: "short", hour: "2-digit", minute: "2-digit" });
 const fmtDate = ms => dateFmt.format(new Date(ms));
 
-const VIEWS = ["vRegister", "vLobby", "vPlay", "vBoard"];
+const VIEWS = ["vLogin", "vSignup", "vLobby", "vPlay", "vBoard", "vAccount"];
 function show(view) { for (const v of VIEWS) $(v).hidden = v !== view; }
 function say(text, kind) {
   const m = $("tMsg");
@@ -177,11 +206,20 @@ async function run(buttons, fn) {
   finally { for (const b of buttons) b.disabled = false; holdDuringCooldown(); }
 }
 function handleError(err) {
-  if (err instanceof ApiError && err.kind === "http" && err.status === 401 && err.code !== "invalid_invite") {
-    logout("Ta session n'est plus valide. Demande un nouveau code d'invitation à l'organisateur.");
+  if (err instanceof ApiError && err.kind === "http" && err.status === 401) {
+    if (err.code === "invalid_code" || err.code === "invalid_ticket") { showLogin(); say(messageFor(err), "err"); return; }
+    forget("Ta session a expiré. Reconnecte-toi avec Discord.");
     return;
   }
+  if (err instanceof ApiError && err.kind === "http" && err.status === 403) { showLogin(); say(blockedMessage(err), "err"); return; }
   say(messageFor(err), "err");
+}
+// Compte suspendu ou banni : raison (code connu uniquement) et date de fin.
+function blockedMessage(err) {
+  const d = err.data || {}, why = Object.prototype.hasOwnProperty.call(REASONS, d.reason) ? ` (raison : ${REASONS[d.reason]})` : "";
+  if (err.code === "account_suspended" && isCount(d.until)) return `Ton compte est suspendu jusqu'au ${fmtDate(d.until)}${why}.`;
+  if (err.code === "account_banned") return `Ton compte est banni${why}. Pour contester, passe par le salon Discord du jeu.`;
+  return GENERIC;
 }
 // Pendant une attente imposée (429), les boutons restent grisés ; aucune requête n'est relancée.
 let cooldownTimer = null;
@@ -196,17 +234,25 @@ function holdDuringCooldown() {
 
 /* ---------- Session ---------- */
 let me = null;
-function logout(msg) {
+// Oublie la session sur cet appareil (sans appel réseau).
+function forget(msg, kind = "err") {
   token = null; me = null; storage.del(TOKEN_KEY);
   $("tMe").hidden = true;
-  showRegister();
-  if (msg) say(msg, "err");
+  showLogin();
+  if (msg) say(msg, kind);
 }
 function setMe(d) {
   me = d;
   $("tMeAv").textContent = emoji(d.avatar); $("tMeName").textContent = d.pseudo; $("tMe").hidden = false;
   $("tProfAv").textContent = emoji(d.avatar); $("tProfName").textContent = d.pseudo;
   $("tProfWins").textContent = `${d.wins} victoire${d.wins > 1 ? "s" : ""}`;
+}
+function startSession(d, welcome) {
+  check(RE_TOKEN.test(d.token) && isText(d.pseudo, 40) && isText(d.avatar, 32));
+  token = d.token; storage.set(TOKEN_KEY, token);
+  return openLobby().then(() => {
+    if (welcome) say(storage.persistent ? welcome : `${welcome} Attention : ta session sera perdue en fermant la page.`, storage.persistent ? "ok" : "err");
+  });
 }
 
 /* ---------- Galerie d'avatars ---------- */
@@ -225,26 +271,139 @@ function buildGallery(box, current, onPick) {
   }
 }
 
-/* ---------- Inscription ---------- */
-let regAvatar = null;
-function showRegister() {
-  show("vRegister"); say("");
+/* ---------- Connexion Discord ---------- */
+// Aléa du navigateur, encodé en base64url (43 caractères pour 32 octets).
+function randomNonce() {
+  const b = crypto.getRandomValues(new Uint8Array(32));
+  return btoa(String.fromCharCode(...b)).replace(/\+/g, "-").replace(/\//g, "_").replace(/=+$/, "");
+}
+async function fingerprint(nonce) {
+  const h = new Uint8Array(await crypto.subtle.digest("SHA-256", new TextEncoder().encode(nonce)));
+  return btoa(String.fromCharCode(...h)).replace(/\+/g, "-").replace(/\//g, "_").replace(/=+$/, "");
+}
+function showLogin() {
+  show("vLogin");
   $("tStorageWarn").hidden = storage.persistent;
+}
+$("tLoginBtn").addEventListener("click", () => run([$("tLoginBtn")], async () => {
+  const nonce = randomNonce();
+  if (!session.set(LOGIN_KEY, JSON.stringify({ nonce, at: Date.now() }))) {
+    say("Ce navigateur bloque le stockage de session : la connexion ne peut pas aboutir. Désactive le blocage pour ce site, ou utilise un autre navigateur.", "err");
+    return;
+  }
+  const d = await api("POST", "/v1/auth/discord/start", { nonce });
+  // Seule navigation acceptée : la page d'autorisation de Discord (navigation, pas un fetch).
+  check(typeof d.url === "string" && d.url.length <= 2000 && d.url.startsWith(DISCORD_AUTHORIZE));
+  say("Redirection vers Discord…");
+  location.assign(d.url);
+}));
+
+// Retour de Discord : #login=…&state=… ou #login_error=…. Lu une seule fois au chargement,
+// puis effacé de l'adresse (historique compris) avant toute autre action.
+const loginReturn = (() => {
+  const h = location.hash;
+  if (!/^#login(?:_error)?=/.test(h)) return null;
+  const p = new URLSearchParams(h.slice(1));
+  window.history.replaceState(null, "", location.pathname + location.search + "#tournoi");
+  return { code: p.get("login"), error: p.get("login_error"), state: p.get("state") };
+})();
+const LOGIN_ERRORS = {
+  expired: "La connexion a expiré ou a déjà servi. Recommence.",
+  denied: "Connexion refusée sur Discord.",
+  unavailable: "Discord ne répond pas pour le moment. Réessaie plus tard.",
+  account_too_young: "Ton compte Discord doit avoir au moins 30 jours pour jouer.",
+  rate_limited: "Trop de tentatives. Patiente quelques minutes.",
+  maintenance: CODE_MESSAGES.maintenance
+};
+let signup = null; // { ticket, nonce } : en mémoire seulement, le temps du choix du pseudo
+async function finishLogin(ret) {
+  const raw = session.get(LOGIN_KEY);
+  session.del(LOGIN_KEY);  // une connexion = un seul retour
+  let pending = null;
+  try { pending = JSON.parse(raw); } catch (e) { pending = null; }
+  const ok = pending && typeof pending.nonce === "string" && RE_TOKEN.test(pending.nonce)
+    && isCount(pending.at) && Date.now() - pending.at < LOGIN_TTL_MS;
+  if (!ok || typeof ret.state !== "string" || ret.state !== await fingerprint(pending.nonce)) {
+    // Pas lancée depuis cet onglet (lien piégé, autre navigateur, trop ancienne) : rien n'est envoyé.
+    showLogin(); say("Cette connexion n'a pas été lancée depuis cette page, ou elle a expiré. Recommence.", "err");
+    return;
+  }
+  if (ret.error !== null) {
+    showLogin(); say(Object.prototype.hasOwnProperty.call(LOGIN_ERRORS, ret.error) ? LOGIN_ERRORS[ret.error] : GENERIC, "err");
+    return;
+  }
+  if (typeof ret.code !== "string" || !RE_TOKEN.test(ret.code)) { showLogin(); say(GENERIC, "err"); return; }
+  show(null); say("Connexion…");
+  await run([], async () => {
+    const d = await api("POST", "/v1/auth/exchange", { code: ret.code, nonce: pending.nonce });
+    if (typeof d.signup === "string") {
+      check(RE_TOKEN.test(d.signup));
+      signup = { ticket: d.signup, nonce: pending.nonce };
+      showSignup();
+      return;
+    }
+    await startSession(d, `Content de te revoir, ${d.pseudo} !`);
+  });
+}
+
+/* ---------- Premier passage : pseudo et avatar ---------- */
+let regAvatar = null;
+function showSignup() {
+  show("vSignup"); say("");
   buildGallery($("tRegGallery"), regAvatar, id => { regAvatar = id; });
 }
-$("tRegForm").addEventListener("submit", e => {
+$("tSignupForm").addEventListener("submit", e => {
   e.preventDefault();
-  const invite = $("tInvite").value.trim(), pseudo = $("tPseudo").value.trim();
-  if (!RE_INVITE.test(invite)) { say("Le code d'invitation fait 32 caractères (lettres, chiffres, - ou _).", "err"); return; }
+  const pseudo = $("tPseudo").value.trim();
+  if (!signup) { showLogin(); say(CODE_MESSAGES.invalid_ticket, "err"); return; }
   if (!RE_PSEUDO.test(pseudo)) { say("Pseudo : 3 à 20 caractères, lettres sans accent, chiffres, - ou _.", "err"); return; }
   if (!regAvatar) { say("Choisis un avatar.", "err"); return; }
-  run([$("tRegBtn")], async () => {
-    const d = await api("POST", "/v1/register", { invite_code: invite, pseudo, avatar: regAvatar });
-    check(RE_TOKEN.test(d.token) && isText(d.pseudo, 40) && isText(d.avatar, 32));
-    token = d.token; storage.set(TOKEN_KEY, token);
-    $("tInvite").value = "";
-    await openLobby();
-    say(storage.persistent ? "Bienvenue dans le tournoi !" : "Bienvenue ! Attention : ta session sera perdue en fermant la page.", storage.persistent ? "ok" : "err");
+  run([$("tSignupBtn")], async () => {
+    const d = await api("POST", "/v1/auth/signup", { ticket: signup.ticket, nonce: signup.nonce, pseudo, avatar: regAvatar });
+    signup = null; $("tPseudo").value = "";
+    await startSession(d, "Bienvenue dans le tournoi !");
+  });
+});
+$("tSignupCancel").addEventListener("click", () => { signup = null; showLogin(); say(""); });
+
+/* ---------- Mon compte ---------- */
+const dayFmt = new Intl.DateTimeFormat("fr-FR", { day: "numeric", month: "long", year: "numeric" });
+function showAccount() {
+  if (!me) return;
+  $("tAccAv").textContent = emoji(me.avatar); $("tAccName").textContent = me.pseudo;
+  $("tAccSince").textContent = `Inscrit le ${dayFmt.format(new Date(me.created_at))} · ${me.wins} victoire${me.wins > 1 ? "s" : ""}`;
+  const list = $("tAccWarnList"); list.replaceChildren();
+  for (const w of me.warnings) {
+    const why = Object.prototype.hasOwnProperty.call(REASONS, w.reason) ? REASONS[w.reason] : REASONS.other;
+    list.append(el("li", null, `${dayFmt.format(new Date(w.created_at))} : ${why}`));
+  }
+  $("tAccWarnings").hidden = me.warnings.length === 0;
+  $("tDeleteConfirm").value = ""; $("tDeleteBtn").disabled = true;
+  show("vAccount"); say("");
+}
+$("tAccountBtn").addEventListener("click", () => run([$("tAccountBtn")], async () => {
+  setMe(checkMe(await api("GET", "/v1/me"))); showAccount();
+}));
+$("tAccountBack").addEventListener("click", () => run([$("tAccountBack")], openLobby));
+// Déconnexion : la session est fermée côté serveur ; en cas d'échec réseau, elle est quand même
+// oubliée sur cet appareil (elle expirera seule).
+function logoutWith(path, btn, msg) {
+  run([btn], async () => {
+    try { await api("POST", path); } catch (err) { if (!(err instanceof ApiError) || err.status !== 401) { forget(`${msg} (le serveur n'a pas pu être prévenu.)`, "ok"); return; } }
+    forget(msg, "ok");
+  });
+}
+$("tLogout").addEventListener("click", () => logoutWith("/v1/auth/logout", $("tLogout"), "Tu es déconnecté sur cet appareil."));
+$("tLogoutAll").addEventListener("click", () => logoutWith("/v1/auth/logout-all", $("tLogoutAll"), "Tu es déconnecté de tous tes appareils."));
+$("tDeleteConfirm").addEventListener("input", () => { $("tDeleteBtn").disabled = !me || $("tDeleteConfirm").value !== me.pseudo; });
+$("tDeleteForm").addEventListener("submit", e => {
+  e.preventDefault();
+  const typed = $("tDeleteConfirm").value;
+  if (!me || typed !== me.pseudo) return;
+  run([$("tDeleteBtn")], async () => {
+    const d = await api("POST", "/v1/me/delete", { confirm_pseudo: typed });
+    check(d.deleted === true);
+    forget("Ton compte a été supprimé. Merci d'avoir joué !", "ok");
   });
 });
 
@@ -424,8 +583,9 @@ function openBoard(id, btn) {
     st.className = `tstate ${d.state}`;
     const rows = $("tBoardRows"); rows.replaceChildren();
     for (const e of d.entries) {
-      const tr = el("tr", me && e.pseudo === me.pseudo ? "me" : null);
-      tr.append(el("td", null, String(e.rank)), el("td", "tav", emoji(e.avatar)), el("td", "tp", e.pseudo),
+      const tr = el("tr", !e.deleted && me && e.pseudo === me.pseudo ? "me" : null);
+      tr.append(el("td", null, String(e.rank)), el("td", "tav", e.deleted ? "👤" : emoji(e.avatar)),
+                el("td", e.deleted ? "tp tdel" : "tp", e.deleted ? "Joueur supprimé" : e.pseudo),
                 el("td", null, fmtMs(e.elapsed_ms)), el("td", null, String(e.wins)));
       if (d.state === "closed" && e.rank === 1) tr.classList.add("win");
       rows.append(tr);
@@ -460,6 +620,7 @@ window.addEventListener("keydown", e => {
 }, true);
 
 /* ---------- Navigation solo ↔ tournoi (#tournoi) ---------- */
+let loginPending = loginReturn;  // traité à l'entrée dans le tournoi, une seule fois
 function enter() {
   active = true;
   $("app").hidden = true; $("tournoi").hidden = false;
@@ -470,7 +631,8 @@ function enter() {
   // dans un cadre (protection contre le clickjacking des actions du tournoi).
   if (window.top !== window.self) { show(null); say("Le mode tournoi ne s'ouvre pas dans un cadre. Ouvre la page directement.", "err"); return; }
   if (!API) { show(null); say(messageFor(new ApiError("config")), "err"); return; }
-  if (!token) { showRegister(); return; }
+  if (loginPending) { const ret = loginPending; loginPending = null; finishLogin(ret); return; }
+  if (!token) { showLogin(); say(""); return; }
   show(null); say("Chargement…");
   run([], openLobby);
 }

@@ -62,19 +62,24 @@
   </div>
   <p class="tmsg" id="tMsg" role="status" aria-live="polite" hidden></p>
 
-  <div class="tview" id="vRegister" hidden>
-    <h2 class="th2">Rejoindre le tournoi</h2>
-    <p class="sub">Entre le code d'invitation reçu de l'organisateur, choisis un pseudo et un avatar.</p>
-    <p class="twarn" id="tStorageWarn" hidden>Ce navigateur ne peut pas garder ta session (navigation privée ?) : en fermant la page, tu perdras l'accès à ton compte. Utilise plutôt un navigateur normal.</p>
-    <form id="tRegForm" novalidate>
-      <label class="tlabel" for="tInvite">Code d'invitation</label>
-      <input class="codein tinput" id="tInvite" maxlength="32" autocomplete="off" autocapitalize="off" spellcheck="false" required>
+  <div class="tview" id="vLogin" hidden>
+    <h2 class="th2">Se connecter</h2>
+    <p class="sub">Le tournoi utilise ton compte Discord pour te reconnaître, sur tous tes appareils. Seul ton identifiant Discord est lu : ni ton nom, ni ton e-mail, ni tes messages. Ton compte Discord doit avoir au moins 30 jours.</p>
+    <p class="twarn" id="tStorageWarn" hidden>Ce navigateur ne peut pas garder ta session (navigation privée ?) : en fermant la page, tu devras te reconnecter.</p>
+    <button class="pill primary tsubmit" type="button" id="tLoginBtn">Se connecter avec Discord</button>
+  </div>
+
+  <div class="tview" id="vSignup" hidden>
+    <h2 class="th2">Bienvenue !</h2>
+    <p class="sub">Première connexion : choisis le pseudo et l'avatar que verront les autres joueurs. Ton nom Discord n'est jamais affiché.</p>
+    <form id="tSignupForm" novalidate>
       <label class="tlabel" for="tPseudo">Pseudo</label>
       <input class="codein tinput" id="tPseudo" maxlength="20" autocomplete="nickname" autocapitalize="off" spellcheck="false" required>
       <p class="thelp">3 à 20 caractères : lettres sans accent, chiffres, - ou _.</p>
       <p class="tlabel" id="tAvLabel">Avatar</p>
       <div class="tgallery" id="tRegGallery" role="radiogroup" aria-labelledby="tAvLabel"></div>
-      <button class="pill primary tsubmit" type="submit" id="tRegBtn">Rejoindre</button>
+      <button class="pill primary tsubmit" type="submit" id="tSignupBtn">Créer mon compte</button>
+      <button class="linkbtn" type="button" id="tSignupCancel">Annuler</button>
     </form>
   </div>
 
@@ -83,6 +88,7 @@
       <span class="tav big" id="tProfAv"></span>
       <div><div class="tpseudo" id="tProfName"></div><div class="sub" id="tProfWins"></div></div>
       <button class="pill" type="button" id="tAvBtn">Changer d'avatar</button>
+      <button class="pill" type="button" id="tAccountBtn">Mon compte</button>
     </div>
     <div class="tgallery" id="tAvGallery" hidden></div>
     <div class="thead"><h2 class="th2">Manches</h2><button class="pill" type="button" id="tRefresh">Actualiser</button></div>
@@ -113,6 +119,30 @@
     <p class="sub" id="tBoardEmpty" hidden>Personne n'a encore terminé cette manche.</p>
     <p class="sub" id="tBoardCount"></p>
     <div class="tactions"><button class="pill" type="button" id="tBoardBack">Retour aux manches</button></div>
+  </div>
+  <div class="tview" id="vAccount" hidden>
+    <h2 class="th2">Mon compte</h2>
+    <div class="tprofile">
+      <span class="tav big" id="tAccAv"></span>
+      <div><div class="tpseudo" id="tAccName"></div><div class="sub" id="tAccSince"></div></div>
+    </div>
+    <div id="tAccWarnings" hidden>
+      <h3 class="th3">Avertissements (30 derniers jours)</h3>
+      <ul class="twarnlist" id="tAccWarnList"></ul>
+    </div>
+    <h3 class="th3">Sessions</h3>
+    <div class="tactions">
+      <button class="pill" type="button" id="tLogout">Se déconnecter</button>
+      <button class="pill" type="button" id="tLogoutAll">Se déconnecter de tous les appareils</button>
+    </div>
+    <h3 class="th3">Supprimer mon compte</h3>
+    <p class="sub">Ton pseudo, ton avatar et le lien avec ton compte Discord sont effacés tout de suite. Tes anciens résultats restent dans les classements sous « Joueur supprimé ». Les sauvegardes du serveur les oublient au bout de 30 jours. C'est définitif.</p>
+    <form id="tDeleteForm" novalidate>
+      <label class="tlabel" for="tDeleteConfirm">Pour confirmer, retape ton pseudo</label>
+      <input class="codein tinput" id="tDeleteConfirm" maxlength="20" autocomplete="off" autocapitalize="off" spellcheck="false">
+      <button class="pill danger tsubmit" type="submit" id="tDeleteBtn" disabled>Supprimer définitivement</button>
+    </form>
+    <div class="tactions"><button class="pill" type="button" id="tAccountBack">Retour aux manches</button></div>
   </div>
 </section>
 

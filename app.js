@@ -920,6 +920,6 @@ function showTournamentChoice(canContinue) {
     sheet.querySelector("[data-act=playShared]").addEventListener("click", () => startFromCode(shared.code, shared.key));
     return;
   }
-  // Lien direct #tournoi : tournoi.js prend la main, pas d'écran d'accueil.
-  if (location.hash !== "#tournoi") showHome(resumable);
+  // Lien direct #tournoi, ou retour de Discord (#login…) : tournoi.js prend la main.
+  if (location.hash !== "#tournoi" && !/^#login(?:_error)?=/.test(location.hash)) showHome(resumable);
 })();

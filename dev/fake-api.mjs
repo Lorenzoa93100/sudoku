@@ -1,8 +1,9 @@
 // Faux serveur d'API, pour développer et tester le mode tournoi sans toucher au vrai.
 // Il reproduit le comportement visible de la prod : CORS de Caddy (une seule origine, 404
 // uniforme ailleurs, pré-vol OPTIONS, corps limité à 4 Ko, Retry-After non exposé) et
-// règles de l'API (invitations, avatars, un seul essai, validation par les règles,
-// classement et victoires). Il ne sert jamais en production : rien ici n'est publié.
+// règles de l'API (connexion Discord avec nonce et empreinte, sessions, suppression de compte,
+// avatars, un seul essai, validation par les règles, classement et victoires). Discord lui-même
+// est simulé par `discordReturn` : les tests ne quittent jamais les deux domaines simulés. Il ne sert jamais en production : rien ici n'est publié.
 
 export const FRONT_ORIGIN = "https://lorenzoa93100.github.io";
 export const AVATARS = ["chat", "chien", "renard", "panda", "koala", "tigre", "lion", "grenouille", "hibou",
@@ -10,7 +11,11 @@ export const AVATARS = ["chat", "chien", "renard", "panda", "koala", "tigre", "l
 export const PUZZLE = "530070000600195000098000060800060003400803001700020006060000280000419005000080079";
 export const SOLUTION = "534678912672195348198342567859761423426853791713924856961537284287419635345286179";
 
-const RE_INVITE = /^[A-Za-z0-9_-]{32}$/, RE_PSEUDO = /^[A-Za-z0-9_-]{3,20}$/, RE_TOKEN = /^[A-Za-z0-9_-]{43}$/;
+import { createHash } from "node:crypto";
+
+const RE_PSEUDO = /^[A-Za-z0-9_-]{3,20}$/, RE_TOKEN = /^[A-Za-z0-9_-]{43}$/;
+export const DISCORD_AUTHORIZE = "https://discord.com/oauth2/authorize";
+const fingerprint = nonce => createHash("sha256").update(nonce).digest("base64url");
 const UNITS = (() => {
   const u = [];
   for (let r = 0; r < 9; r++) u.push([...Array(9)].map((_, c) => r * 9 + c));
@@ -28,8 +33,10 @@ const randomToken = n => {
 };
 
 export function createFakeApi({ clock = () => Date.now(), maxWrong = 5 } = {}) {
-  const invites = new Map();        // code -> userId | null (réémission)
-  const users = new Map();          // id -> { pseudo, avatar }
+  const states = new Map();         // state -> nonce (départ vers Discord)
+  const codes = new Map();          // code d'échange ou ticket -> { kind, discordId, nonce }
+  const users = new Map();          // id -> { pseudo, avatar, discordId, created_at, warnings, deleted }
+  const blocked = new Map();        // discordId -> { error, reason, until? }
   const tokens = new Map();         // token -> userId
   const rounds = new Map();         // id -> { id, difficulty, puzzle, starts_at, ends_at, min_solve_ms }
   const attempts = new Map();       // `${round}:${user}` -> attempt
@@ -42,11 +49,23 @@ export function createFakeApi({ clock = () => Date.now(), maxWrong = 5 } = {}) {
     // Sonde du lot 0 : secret attendu (null = sonde fermée) et nombre de ticks d'un flux.
     probeSecret: null,
     probeTicks: 5,
-    addInvite(code = randomToken(32)) { invites.set(code, null); return code; },
-    addUser(pseudo, avatar = "chat") {
-      const id = nextUser++; users.set(id, { pseudo, avatar });
+    addUser(pseudo, avatar = "chat", { discordId = `d${nextUser}`, warnings = [] } = {}) {
+      const id = nextUser++;
+      users.set(id, { pseudo, avatar, discordId, created_at: clock() - 86_400_000, warnings, deleted: false });
       const t = randomToken(43); tokens.set(t, id); return { id, token: t };
     },
+    // Ce que ferait Discord puis l'API au retour : fragment à coller après l'URL du front.
+    // error : refus côté Discord ; sinon un code d'échange lié au nonce du départ.
+    discordReturn(state, { discordId = "nouveau", error = null } = {}) {
+      const nonce = states.get(state);
+      if (nonce === undefined) return "#login_error=expired";
+      states.delete(state);
+      if (error) return `#login_error=${error}&state=${fingerprint(nonce)}`;
+      const code = randomToken(43); codes.set(code, { kind: "login", discordId, nonce });
+      return `#login=${code}&state=${fingerprint(nonce)}`;
+    },
+    block(discordId, info) { blocked.set(discordId, info); },
+    deleteUser(id) { const u = users.get(id); Object.assign(u, { pseudo: null, avatar: null, discordId: null, deleted: true }); },
     revokeTokens() { tokens.clear(); },
     addRound({ difficulty = "facile", puzzle = PUZZLE, startsIn = -60_000, duration = 3_600_000, minSolveMs = 0 } = {}) {
       const id = nextRound++, now = clock();
@@ -107,29 +126,60 @@ export function createFakeApi({ clock = () => Date.now(), maxWrong = 5 } = {}) {
     const route = `${req.method} ${req.path.replace(/\/\d+\//, "/:id/")}`;
     const rid = Number((/^\/v1\/rounds\/(\d+)\//.exec(req.path) || [])[1]);
 
-    if (route === "POST /v1/register") {
-      if (!strict(["invite_code", "pseudo", "avatar"], ["invite_code"]) || typeof body.invite_code !== "string" || !RE_INVITE.test(body.invite_code)
-        || (body.pseudo != null && (typeof body.pseudo !== "string" || !RE_PSEUDO.test(body.pseudo)))
-        || (body.avatar != null && !AVATARS.includes(body.avatar))) return json(422, { error: "invalid_request" });
-      if (!invites.has(body.invite_code)) return json(401, { error: "invalid_invite" });
-      let uid = invites.get(body.invite_code);
-      if (uid === null) {
-        if (body.pseudo == null) return json(422, { error: "pseudo_required" });
-        if (body.avatar == null) return json(422, { error: "avatar_required" });
-        if ([...users.values()].some(u => u.pseudo.toLowerCase() === body.pseudo.toLowerCase())) return json(409, { error: "pseudo_taken" });
-        uid = nextUser++; users.set(uid, { pseudo: body.pseudo, avatar: body.avatar });
+    const secret = v => typeof v === "string" && RE_TOKEN.test(v);
+    if (route === "POST /v1/auth/discord/start") {
+      if (!strict(["nonce"], ["nonce"]) || !secret(body.nonce)) return json(422, { error: "invalid_request" });
+      const state = randomToken(43); states.set(state, body.nonce);
+      const q = new URLSearchParams({ response_type: "code", client_id: "123456789012345678", scope: "identify",
+        state, redirect_uri: "https://jeu.taila17c77.ts.net/v1/auth/discord/callback", prompt: "none" });
+      return json(200, { url: `${DISCORD_AUTHORIZE}?${q}` });
+    }
+    if (route === "POST /v1/auth/exchange") {
+      if (!strict(["code", "nonce"], ["code", "nonce"]) || !secret(body.code) || !secret(body.nonce)) return json(422, { error: "invalid_request" });
+      const c = codes.get(body.code);
+      if (!c || c.kind !== "login" || c.nonce !== body.nonce) return json(401, { error: "invalid_code" });
+      codes.delete(body.code);
+      const b = blocked.get(c.discordId);
+      if (b) return json(403, b.error === "account_suspended" ? { error: b.error, reason: b.reason, until: b.until } : { error: b.error, reason: b.reason });
+      const found = [...users.entries()].find(([, u]) => u.discordId === c.discordId && !u.deleted);
+      if (found) {
+        const t = randomToken(43); tokens.set(t, found[0]);
+        return json(200, { token: t, pseudo: found[1].pseudo, avatar: found[1].avatar });
       }
-      invites.delete(body.invite_code);
+      if (fake.signupsClosed) return json(429, { error: "signups_closed" });
+      const ticket = randomToken(43); codes.set(ticket, { kind: "signup", discordId: c.discordId, nonce: body.nonce });
+      return json(200, { signup: ticket });
+    }
+    if (route === "POST /v1/auth/signup") {
+      if (!strict(["ticket", "nonce", "pseudo", "avatar"], ["ticket", "nonce", "pseudo", "avatar"]) || !secret(body.ticket) || !secret(body.nonce)
+        || typeof body.pseudo !== "string" || !RE_PSEUDO.test(body.pseudo) || !AVATARS.includes(body.avatar)) return json(422, { error: "invalid_request" });
+      const c = codes.get(body.ticket);
+      if (!c || c.kind !== "signup" || c.nonce !== body.nonce) return json(401, { error: "invalid_ticket" });
+      if (/admin|connard/i.test(body.pseudo)) return json(422, { error: "pseudo_forbidden" });
+      if ([...users.values()].some(u => u.pseudo && u.pseudo.toLowerCase() === body.pseudo.toLowerCase())) return json(409, { error: "pseudo_taken" });
+      codes.delete(body.ticket);
+      const uid = nextUser++;
+      users.set(uid, { pseudo: body.pseudo, avatar: body.avatar, discordId: c.discordId, created_at: clock(), warnings: [], deleted: false });
       const t = randomToken(43); tokens.set(t, uid);
-      return json(201, { token: t, pseudo: users.get(uid).pseudo, avatar: users.get(uid).avatar });
+      return json(201, { token: t, pseudo: body.pseudo, avatar: body.avatar });
     }
     if (req.path.startsWith("/v1/probe/")) return probe(req, route, body);
     const [scheme, t] = (req.headers.authorization || "").split(" ");
     const uid = scheme === "Bearer" && RE_TOKEN.test(t || "") ? tokens.get(t) : undefined;
-    if (!uid) return json(401, { error: "unauthorized" }, { "www-authenticate": "Bearer" });
+    if (!uid || users.get(uid).deleted) return json(401, { error: "unauthorized" }, { "www-authenticate": "Bearer" });
     const user = users.get(uid), now = clock();
 
-    if (route === "GET /v1/me") return json(200, { pseudo: user.pseudo, avatar: user.avatar, wins: wins(now).get(uid) || 0 });
+    if (route === "GET /v1/me") return json(200, { pseudo: user.pseudo, avatar: user.avatar, created_at: user.created_at,
+      wins: wins(now).get(uid) || 0, warnings: user.warnings });
+    if (route === "POST /v1/auth/logout") { tokens.delete(t); return json(200, { ok: true }); }
+    if (route === "POST /v1/auth/logout-all") { for (const [k, v] of tokens) if (v === uid) tokens.delete(k); return json(200, { ok: true }); }
+    if (route === "POST /v1/me/delete") {
+      if (!strict(["confirm_pseudo"], ["confirm_pseudo"]) || typeof body.confirm_pseudo !== "string") return json(422, { error: "invalid_request" });
+      if (body.confirm_pseudo !== user.pseudo) return json(422, { error: "confirmation_mismatch" });
+      fake.deleteUser(uid);
+      for (const [k, v] of tokens) if (v === uid) tokens.delete(k);
+      return json(200, { deleted: true });
+    }
     if (route === "POST /v1/me/avatar") {
       if (!strict(["avatar"], ["avatar"]) || !AVATARS.includes(body.avatar)) return json(422, { error: "invalid_request" });
       user.avatar = body.avatar; return json(200, { avatar: body.avatar });
@@ -173,7 +223,8 @@ export function createFakeApi({ clock = () => Date.now(), maxWrong = 5 } = {}) {
     if (route === "GET /v1/rounds/:id/leaderboard") {
       if (!r) return json(404, { error: "round_not_found" });
       const w = wins(now);
-      const entries = ranked(rid).map((a, k) => ({ rank: k + 1, pseudo: users.get(a.user).pseudo, avatar: users.get(a.user).avatar, elapsed_ms: a.elapsed_ms, wins: w.get(a.user) || 0 }));
+      const entries = ranked(rid).map((a, k) => { const u = users.get(a.user);
+        return { rank: k + 1, pseudo: u.pseudo, avatar: u.avatar, elapsed_ms: a.elapsed_ms, wins: w.get(a.user) || 0, deleted: u.deleted }; });
       const participants = [...attempts.values()].filter(a => a.round === rid).length;
       return json(200, { round_id: rid, state: state(r, now), participants, entries });
     }

@@ -39,8 +39,15 @@ beforeEach(() => { fake = createFakeApi(); });
 // Ouvre une page dans un contexte neuf (localStorage vide) et surveille ce qui ne doit pas arriver.
 async function open(path = "", { brokenStorage = false, init } = {}) {
   const ctx = await browser.newContext({ ignoreHTTPSErrors: true, locale: "fr-FR", serviceWorkers: "block" });
-  const watch = { csp: [], errors: [], hosts: new Set() };
-  ctx.on("request", r => { const u = new URL(r.url()); if (u.protocol.startsWith("http")) watch.hosts.add(u.host); });
+  const watch = { csp: [], errors: [], hosts: new Set(), console: [] };
+  // Seule exception aux deux domaines : la NAVIGATION vers la page d'autorisation de Discord
+  // (jamais suivie : bloquée plus bas). Un fetch vers discord.com resterait une erreur.
+  ctx.on("request", r => {
+    const u = new URL(r.url());
+    if (!u.protocol.startsWith("http")) return;
+    if (u.host === "discord.com" && r.isNavigationRequest()) return;
+    watch.hosts.add(u.host);
+  });
   await ctx.addInitScript(() => {
     window.__csp = [];
     document.addEventListener("securitypolicyviolation", e => window.__csp.push(`${e.violatedDirective} ${e.blockedURI}`));
@@ -53,7 +60,7 @@ async function open(path = "", { brokenStorage = false, init } = {}) {
   await ctx.route(u => !ALLOWED_HOSTS.has(u.host), r => r.abort());
   const page = await ctx.newPage();
   page.on("pageerror", e => watch.errors.push(String(e)));
-  page.on("console", m => { if (m.type() === "error") watch.errors.push(m.text()); });
+  page.on("console", m => { watch.console.push(m.text()); if (m.type() === "error") watch.errors.push(m.text()); });
   await page.goto(`${servers.url}${path}`);
   watch.check = async () => {
     assert.deepEqual(await page.evaluate(() => window.__csp), [], "violations de CSP");
@@ -63,11 +70,27 @@ async function open(path = "", { brokenStorage = false, init } = {}) {
   return { page, ctx, watch };
 }
 const msg = page => page.locator("#tMsg");
-async function register(page, { invite = fake.addInvite(), pseudo = "Alice", avatar = "dragon" } = {}) {
-  await page.fill("#tInvite", invite);
+// « Se connecter avec Discord » : la navigation vers Discord est interceptée (jamais suivie),
+// puis on revient sur le front, page rechargée, avec le fragment que renverrait l'API.
+async function discordLogin(page, { discordId = "nouveau", error = null, tamper = null } = {}) {
+  const nav = page.waitForRequest(r => new URL(r.url()).host === "discord.com");
+  await page.click("#tLoginBtn");
+  const url = new URL((await nav).url());
+  let frag = fake.discordReturn(url.searchParams.get("state"), { discordId, error });
+  if (tamper) frag = tamper(frag);
+  await page.goto("about:blank");
+  await page.goto(servers.url + frag);
+  return { url, frag };
+}
+async function fillSignup(page, { pseudo = "Alice", avatar = "dragon" } = {}) {
   await page.fill("#tPseudo", pseudo);
   if (avatar) await page.click(`#tRegGallery [data-avatar="${avatar}"]`);
-  await page.click("#tRegBtn");
+  await page.click("#tSignupBtn");
+}
+async function register(page, opts = {}) {
+  await discordLogin(page, opts);
+  await page.waitForSelector("#vSignup:not([hidden])");
+  await fillSignup(page, opts);
 }
 async function loggedIn(path = "#tournoi", opts) {
   const { token } = fake.addUser("Alice", "dragon");
@@ -228,7 +251,7 @@ describe("écran d'accueil", () => {
     assert.equal(fake.log.length, n, "aucune requête");
     assert.deepEqual(await homeButtons(page), ["Rejoindre", "Créer"], "on reste sur le même écran");
     await page.click('.menu.home button:has-text("Rejoindre")');
-    await page.waitForSelector("#vRegister:not([hidden])");
+    await page.waitForSelector("#vLogin:not([hidden])");
     assert.equal(await page.evaluate(() => location.hash), "#tournoi");
     await watch.check(); await ctx.close();
   });
@@ -325,7 +348,7 @@ describe("écran d'accueil", () => {
 
   test("lien direct #tournoi : pas d'écran d'accueil", async () => {
     const { page, ctx, watch } = await open("#tournoi", { init: withGame(savedGame) });
-    await page.waitForSelector("#vRegister:not([hidden])");
+    await page.waitForSelector("#vLogin:not([hidden])");
     assert.equal(await page.evaluate(() => document.getElementById("overlay").classList.contains("open")), false);
     await watch.check(); await ctx.close();
   });
@@ -333,7 +356,7 @@ describe("écran d'accueil", () => {
   test("partie en cours : Rejoindre un tournoi met le solo en pause, Retour le retrouve", async () => {
     const { page, ctx, watch } = await open("", { init: withGame(savedGame) });
     await joinTournament(page);
-    await page.waitForSelector("#vRegister:not([hidden])");
+    await page.waitForSelector("#vLogin:not([hidden])");
     assert.equal(await page.evaluate(() => paused), true);
     await page.click("#tBack");
     await page.waitForSelector("#app:not([hidden])");
@@ -346,7 +369,7 @@ describe("mode tournoi", () => {
   test("accès depuis l'accueil et retour à l'accueil", async () => {
     const { page, ctx, watch } = await open();
     await joinTournament(page);
-    await page.waitForSelector("#vRegister:not([hidden])");
+    await page.waitForSelector("#vLogin:not([hidden])");
     assert.equal(await page.isHidden("#app"), true);
     await page.click("#tBack");
     await page.waitForSelector("#app:not([hidden])");
@@ -359,49 +382,219 @@ describe("mode tournoi", () => {
     await newGame(page);
     await page.click("#menuBtn");
     await page.click('#sheet a[href="#tournoi"]');
-    await page.waitForSelector("#vRegister:not([hidden])");
+    await page.waitForSelector("#vLogin:not([hidden])");
     await watch.check(); await ctx.close();
   });
 
-  test("inscription : contrôles locaux, puis succès avec jeton stocké sous une clé dédiée", async () => {
+  test("connexion Discord : nonce envoyé, navigation vers Discord, retour effacé de l'adresse", async () => {
     const { page, ctx, watch } = await open("#tournoi");
-    await register(page, { pseudo: "é", avatar: null });
-    await assert.doesNotReject(msg(page).getByText("Pseudo : 3 à 20").waitFor());
-    await register(page, { avatar: null });
+    await page.waitForSelector("#vLogin:not([hidden])");
+    const { url, frag } = await discordLogin(page);
+    assert.equal(`${url.origin}${url.pathname}`, "https://discord.com/oauth2/authorize");
+    assert.equal(url.searchParams.get("scope"), "identify");
+    const start = fake.log.find(r => r.path === "/v1/auth/discord/start");
+    assert.deepEqual(Object.keys(JSON.parse(start.body)), ["nonce"]);
+    assert.match(JSON.parse(start.body).nonce, /^[A-Za-z0-9_-]{43}$/);
+    await page.waitForSelector("#vSignup:not([hidden])");
+    // Le code ne reste ni dans l'adresse ni dans l'historique (remplacé, pas ajouté).
+    const code = new URLSearchParams(frag.slice(1)).get("login");
+    assert.equal(await page.evaluate(() => location.hash), "#tournoi");
+    assert.ok(!(await page.evaluate(() => location.href)).includes(code));
+    assert.equal(await page.evaluate(() => sessionStorage.getItem("sudoku-tournoi-connexion")), null, "nonce consommé");
+    const ex = fake.log.find(r => r.path === "/v1/auth/exchange");
+    assert.deepEqual(Object.keys(JSON.parse(ex.body)).sort(), ["code", "nonce"]);
+    assert.equal(JSON.parse(ex.body).nonce, JSON.parse(start.body).nonce);
+    await watch.check();
+    // L'entrée d'historique a été remplacée : revenir en arrière ne retrouve jamais le code.
+    await page.goBack();
+    assert.equal(page.url(), "about:blank");
+    await ctx.close();
+  });
+
+  test("premier passage : contrôles locaux, puis compte créé, jeton sous une clé dédiée, jamais dans l'URL ni la console", async () => {
+    const { page, ctx, watch } = await open("#tournoi");
+    await discordLogin(page);
+    await page.waitForSelector("#vSignup:not([hidden])");
+    const posts = () => fake.log.filter(r => r.method === "POST").length;
+    const n = posts();
+    await fillSignup(page, { pseudo: "é", avatar: null });
+    await msg(page).getByText("Pseudo : 3 à 20").waitFor();
+    await fillSignup(page, { avatar: null });
     await msg(page).getByText("Choisis un avatar").waitFor();
-    assert.equal(fake.log.filter(r => r.method === "POST").length, 0, "rien n'est envoyé tant que le formulaire est invalide");
-    await register(page, { invite: "x".repeat(32) });
-    await msg(page).getByText("Code d'invitation invalide").waitFor();
-    await register(page);
+    assert.equal(posts(), n, "rien n'est envoyé tant que le formulaire est invalide");
+    await fillSignup(page);
     await page.waitForSelector("#vLobby:not([hidden])");
     assert.equal(await page.textContent("#tProfName"), "Alice");
     assert.equal(await page.textContent("#tProfAv"), "🐉");
+    await msg(page).getByText("Bienvenue dans le tournoi").waitFor();
     const keys = await page.evaluate(() => Object.keys(localStorage).filter(k => k.startsWith("sudoku-tournoi")));
     assert.deepEqual(keys, [TOKEN_KEY]);
-    assert.match(await page.evaluate(k => localStorage.getItem(k), TOKEN_KEY), /^[A-Za-z0-9_-]{43}$/);
-    const reg = fake.log.find(r => r.path === "/v1/register" && r.method === "POST" && r.body.includes("Alice"));
-    assert.deepEqual(Object.keys(JSON.parse(reg.body)).sort(), ["avatar", "invite_code", "pseudo"]);
+    const token = await page.evaluate(k => localStorage.getItem(k), TOKEN_KEY);
+    assert.match(token, /^[A-Za-z0-9_-]{43}$/);
+    assert.ok(!(await page.evaluate(() => location.href)).includes(token));
+    assert.ok(watch.console.every(t => !t.includes(token)), "jeton absent de la console");
+    assert.equal(await page.evaluate(() => Object.keys(sessionStorage).length), 0, "rien en sessionStorage");
+    const su = fake.log.find(r => r.path === "/v1/auth/signup");
+    assert.deepEqual(Object.keys(JSON.parse(su.body)).sort(), ["avatar", "nonce", "pseudo", "ticket"]);
     await watch.check(); await ctx.close();
   });
 
-  test("422 avatar_required et 409 pseudo_taken : messages dédiés", async () => {
+  test("compte existant : retour direct aux manches", async () => {
+    fake.addUser("Bob", "lion", { discordId: "bob-discord" });
+    const { page, ctx, watch } = await open("#tournoi");
+    await discordLogin(page, { discordId: "bob-discord" });
+    await page.waitForSelector("#vLobby:not([hidden])");
+    await msg(page).getByText("Content de te revoir, Bob").waitFor();
+    assert.equal(fake.log.filter(r => r.path === "/v1/auth/signup").length, 0);
+    await watch.check(); await ctx.close();
+  });
+
+  test("state différent (connexion lancée ailleurs) : ignorée, aucune requête", async () => {
+    const { page, ctx, watch } = await open("#tournoi");
+    await discordLogin(page, { tamper: f => f.replace(/state=[^&]+/, "state=" + "A".repeat(43)) });
+    await page.waitForSelector("#vLogin:not([hidden])");
+    await msg(page).getByText("n'a pas été lancée depuis cette page").waitFor();
+    assert.equal(fake.log.filter(r => r.path === "/v1/auth/exchange").length, 0);
+    assert.equal(await page.evaluate(() => location.hash), "#tournoi");
+    await watch.check(); await ctx.close();
+  });
+
+  test("lien de retour forgé, sans connexion en cours : ignoré, effacé, aucune requête", async () => {
+    const code = "C".repeat(43);
+    const { page, ctx, watch } = await open(`#login=${code}&state=${"S".repeat(43)}`);
+    await page.waitForSelector("#vLogin:not([hidden])");
+    await msg(page).getByText("n'a pas été lancée depuis cette page").waitFor();
+    assert.ok(!(await page.evaluate(() => location.href)).includes(code));
+    assert.equal(fake.log.filter(r => r.path === "/v1/auth/exchange").length, 0);
+    assert.equal(await page.$$eval(".menu.home", e => e.length), 0, "pas d'écran d'accueil par-dessus");
+    await watch.check(); await ctx.close();
+  });
+
+  test("erreurs au retour : compte trop récent, refus, maintenance", async () => {
     const { page, ctx } = await open("#tournoi");
-    fake.queue({ status: 422, body: { error: "avatar_required" } });
-    await register(page);
-    await msg(page).getByText("Choisis un avatar.").waitFor();
+    for (const [error, text] of [["account_too_young", "au moins 30 jours"], ["denied", "Connexion refusée"],
+                                 ["maintenance", "maintenance"], ["autre_chose", "Une erreur est survenue"]]) {
+      await discordLogin(page, { error });
+      await msg(page).getByText(text).waitFor();
+      assert.equal(await page.evaluate(() => location.hash), "#tournoi");
+    }
+    assert.equal(fake.log.filter(r => r.path === "/v1/auth/exchange").length, 0);
+    await ctx.close();
+  });
+
+  test("compte suspendu ou banni : raison et date, pas de session", async () => {
+    fake.block("suspendu", { error: "account_suspended", reason: "cheating", until: Date.UTC(2030, 0, 15, 12) });
+    fake.block("banni", { error: "account_banned", reason: "abuse" });
+    const { page, ctx } = await open("#tournoi");
+    await discordLogin(page, { discordId: "suspendu" });
+    await msg(page).getByText(/suspendu jusqu'au .*15 janv.*raison : triche/).waitFor();
+    await discordLogin(page, { discordId: "banni" });
+    await msg(page).getByText(/banni \(raison : abus\)/).waitFor();
+    assert.equal(await page.evaluate(k => localStorage.getItem(k), TOKEN_KEY), null);
+    await ctx.close();
+  });
+
+  test("inscriptions fermées, pseudo refusé ou pris : messages dédiés", async () => {
+    const { page, ctx } = await open("#tournoi");
+    fake.signupsClosed = true;
+    await discordLogin(page);
+    await msg(page).getByText("inscriptions sont fermées").waitFor();
+    fake.signupsClosed = false;
+    await page.reload();  // 429 : pause imposée de 30 s dans la page
+    await discordLogin(page);
+    await page.waitForSelector("#vSignup:not([hidden])");
+    await fillSignup(page, { pseudo: "Admin" });
+    await msg(page).getByText("n'est pas accepté").waitFor();
     fake.addUser("Alice");
-    await register(page);
-    await msg(page).getByText("Ce pseudo est déjà pris.").waitFor();
+    await fillSignup(page, { pseudo: "alice" });
+    await msg(page).getByText("déjà pris").waitFor();
+    await fillSignup(page, { pseudo: "Alice2" });
+    await page.waitForSelector("#vLobby:not([hidden])");
+    await ctx.close();
+  });
+
+  test("URL de départ qui ne mène pas à Discord : refusée, pas de navigation", async () => {
+    const { page, ctx } = await open("#tournoi");
+    fake.queue({ status: 200, body: { url: "https://evil.example/oauth2/authorize?x=1" } });
+    await page.click("#tLoginBtn");
+    await msg(page).getByText("Réponse inattendue du serveur").waitFor();
+    assert.equal(await page.evaluate(() => location.host), FRONT_HOST);
+    await ctx.close();
+  });
+
+  test("sessionStorage bloqué : explication, aucune requête", async () => {
+    const { page, ctx } = await open("#tournoi", { init: () => {
+      Object.defineProperty(window, "sessionStorage", { get() { throw new DOMException("bloqué", "SecurityError"); } });
+    } });
+    await page.click("#tLoginBtn");
+    await msg(page).getByText("bloque le stockage de session").waitFor();
+    assert.equal(fake.log.length, 0);
     await ctx.close();
   });
 
   test("localStorage indisponible : avertissement clair", async () => {
-    const { page, ctx } = await open("#tournoi", { brokenStorage: true });
+    const { page, ctx } = await open("#tournoi", { init: () => {
+      Object.defineProperty(window, "localStorage", { get() { throw new DOMException("bloqué", "SecurityError"); } });
+    } });
     await page.waitForSelector("#tStorageWarn:not([hidden])");
     await register(page);
     await page.waitForSelector("#vLobby:not([hidden])");
     await msg(page).getByText("ta session sera perdue").waitFor();
     await ctx.close();
+  });
+
+  test("Mon compte : avertissements, déconnexion", async () => {
+    const { token } = fake.addUser("Alice", "dragon", { warnings: [{ reason: "pseudo", created_at: Date.UTC(2030, 1, 3) }] });
+    const { page, ctx, watch } = await open("#tournoi", { init: `localStorage.setItem(${JSON.stringify(TOKEN_KEY)}, ${JSON.stringify(token)})` });
+    await page.click("#tAccountBtn");
+    await page.waitForSelector("#vAccount:not([hidden])");
+    assert.equal(await page.textContent("#tAccName"), "Alice");
+    assert.match(await page.textContent("#tAccWarnList"), /3 février 2030 : pseudo inapproprié/);
+    await page.click("#tLogout");
+    await page.waitForSelector("#vLogin:not([hidden])");
+    await msg(page).getByText("déconnecté sur cet appareil").waitFor();
+    assert.equal(await page.evaluate(k => localStorage.getItem(k), TOKEN_KEY), null);
+    assert.ok(fake.log.some(r => r.path === "/v1/auth/logout" && r.method === "POST"));
+    await watch.check(); await ctx.close();
+  });
+
+  test("Se déconnecter de tous les appareils", async () => {
+    const { page, ctx } = await loggedIn();
+    await page.click("#tAccountBtn");
+    await page.click("#tLogoutAll");
+    await msg(page).getByText("tous tes appareils").waitFor();
+    assert.ok(fake.log.some(r => r.path === "/v1/auth/logout-all"));
+    assert.equal(await page.evaluate(k => localStorage.getItem(k), TOKEN_KEY), null);
+    await ctx.close();
+  });
+
+  test("suppression du compte : pseudo à retaper, puis compte effacé", async () => {
+    const { page, ctx, watch } = await loggedIn();
+    await page.click("#tAccountBtn");
+    await page.waitForSelector("#vAccount:not([hidden])");
+    assert.equal(await page.isDisabled("#tDeleteBtn"), true);
+    await page.fill("#tDeleteConfirm", "alice");
+    assert.equal(await page.isDisabled("#tDeleteBtn"), true, "casse exacte exigée");
+    await page.fill("#tDeleteConfirm", "Alice");
+    await page.click("#tDeleteBtn");
+    await page.waitForSelector("#vLogin:not([hidden])");
+    await msg(page).getByText("Ton compte a été supprimé").waitFor();
+    assert.deepEqual(JSON.parse(fake.log.find(r => r.path === "/v1/me/delete").body), { confirm_pseudo: "Alice" });
+    assert.equal(await page.evaluate(k => localStorage.getItem(k), TOKEN_KEY), null);
+    await watch.check(); await ctx.close();
+  });
+
+  test("classement : un compte supprimé s'affiche « Joueur supprimé »", async () => {
+    const rid = fake.addRound();
+    const gone = fake.addUser("Ancien", "lion");
+    fake.addSolved(rid, gone.id, 50_000);
+    fake.deleteUser(gone.id);
+    const { page, ctx, watch } = await loggedIn();
+    await page.click(`#tRounds button:has-text("Classement")`);
+    await page.waitForSelector("#vBoard:not([hidden])");
+    const row = await page.$$eval("#tBoardRows tr td", tds => tds.map(t => t.textContent));
+    assert.deepEqual(row.slice(0, 3), ["1", "👤", "Joueur supprimé"]);
+    await watch.check(); await ctx.close();
   });
 
   test("manche complète : énoncé au start, seule la grille est envoyée, aucune case désignée", async () => {
@@ -480,13 +673,13 @@ describe("mode tournoi", () => {
     await ctx.close();
   });
 
-  test("401 : jeton effacé, retour à l'inscription", async () => {
+  test("401 : jeton effacé, retour à la connexion", async () => {
     const { page, ctx } = await loggedIn();
     await page.waitForSelector("#vLobby:not([hidden])");
     fake.revokeTokens();
     await page.click("#tRefresh");
-    await page.waitForSelector("#vRegister:not([hidden])");
-    await msg(page).getByText("Ta session n'est plus valide").waitFor();
+    await page.waitForSelector("#vLogin:not([hidden])");
+    await msg(page).getByText("Ta session a expiré. Reconnecte-toi avec Discord.").waitFor();
     assert.equal(await page.evaluate(k => localStorage.getItem(k), TOKEN_KEY), null);
     await ctx.close();
   });
@@ -547,7 +740,7 @@ describe("mode tournoi", () => {
     await page.waitForFunction(() => typeof G !== "undefined" && G);
     const before = await page.evaluate(() => JSON.stringify(G.values));
     await page.evaluate(() => { location.hash = "#tournoi"; });
-    await page.waitForSelector("#vRegister:not([hidden])");
+    await page.waitForSelector("#vLogin:not([hidden])");
     for (const k of ["5", "h", " ", "Backspace", "n"]) await page.keyboard.press(k);
     assert.equal(await page.evaluate(() => JSON.stringify(G.values)), before);
     assert.equal(await page.evaluate(() => document.getElementById("hint").classList.contains("open")), false);

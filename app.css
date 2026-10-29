@@ -412,3 +412,10 @@ a.linkbtn{display:inline-block;text-decoration:none}
 .homesub{color:var(--muted);font-size:13px;font-weight:500}
 .menu.home button.soon{opacity:.5;cursor:not-allowed}
 .homeback{margin-top:12px}
+
+/* ---------- Compte (lot 1) ---------- */
+.th3{font-size:16px;margin:18px 0 6px}
+.pill.danger{background:var(--wrong);color:#fff}
+.pill.danger:disabled{opacity:.45}
+.twarnlist{margin:0;padding-left:18px;font-size:14px;line-height:1.5}
+.ttable td.tdel{color:var(--muted);font-style:italic}

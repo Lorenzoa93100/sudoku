@@ -22,9 +22,10 @@ Les réglages, les stats et la partie en cours sont gardés dans le `localStorag
 
 ## Mode tournoi entre amis
 
-Accès : **Menu → Mode tournoi entre amis**, ou directement `https://lorenzoa93100.github.io/sudoku/#tournoi`.
+Accès : **Nouvelle partie → Tournoi → Rejoindre**, **Menu → Mode tournoi entre amis**, ou directement `https://lorenzoa93100.github.io/sudoku/#tournoi`.
 
-- Inscription avec le code d'invitation donné par l'organisateur, un pseudo et un avatar.
+- Connexion avec Discord uniquement (permission `identify` : seul l'identifiant Discord est lu, ni nom, ni e-mail ; compte Discord de 30 jours au moins). Au premier passage, choix d'un pseudo et d'un avatar ; le nom Discord n'est jamais affiché.
+- **Mon compte** : avertissements éventuels, déconnexion (cet appareil ou tous), suppression du compte (pseudo à retaper). Un compte supprimé apparaît « Joueur supprimé » dans les classements.
 - Une manche = la même grille pour tous, un seul essai. La grille n'arrive qu'au démarrage ; le serveur mesure le temps et valide la grille. Le chrono affiché est indicatif et aucun temps n'est envoyé.
 - Pas d'aides. Une grille fausse indique seulement le nombre d'essais restants, jamais les cases fausses.
 - Classement par manche : rang, avatar, pseudo, temps, victoires ; « classement définitif » quand la manche est terminée.
@@ -36,7 +37,8 @@ Le jeu solo et ses codes de grille sont inchangés (les tests le vérifient gril
 - CSP stricte dans une balise `<meta>` : scripts, styles et polices uniquement depuis `/sudoku/`, aucun `unsafe-inline`, `connect-src` limité à l'API.
 - Limites d'une CSP en `<meta>` (GitHub Pages ne permet pas d'envoyer d'en-têtes) : `frame-ancestors`, `report-uri`/`report-to` et `sandbox` y sont ignorés. Le mode tournoi refuse donc lui-même de s'ouvrir dans un cadre.
 - Tout ce qui vient du serveur est affiché avec `textContent` (`tournoi.js` ne contient aucun `innerHTML`). Les messages d'erreur sont choisis côté front d'après le code d'erreur, jamais recopiés du serveur.
-- Jeton de session dans `localStorage` sous la clé `sudoku-tournoi-token` (header `Authorization`, pas de cookie). Toutes les pages de `lorenzoa93100.github.io` partagent ce stockage : n'y publier aucun autre site non maîtrisé.
+- Jeton de session dans `localStorage` sous la clé `sudoku-tournoi-token` (header `Authorization`, pas de cookie), jamais dans une URL ni dans la console. Toutes les pages de `lorenzoa93100.github.io` partagent ce stockage : n'y publier aucun autre site non maîtrisé.
+- Connexion Discord : un `nonce` aléatoire (32 octets, `crypto.getRandomValues`) est gardé en `sessionStorage` (propre à l'onglet) et envoyé à l'API, qui construit elle-même l'URL Discord. L'aller vers Discord est une **navigation** (`location.assign`, seulement vers `https://discord.com/oauth2/authorize?…`), pas une requête : la CSP ne change pas. Au retour, le fragment `#login=…&state=…` est lu une fois puis effacé de l'adresse (`history.replaceState`) avant toute action ; `state` doit valoir le SHA-256 du nonce de cet onglet, sinon rien n'est envoyé. Le code (usage unique, 1 min) est échangé avec le nonce ; le nonce est effacé de `sessionStorage` dès le retour.
 - Aucun secret dans ce dépôt.
 
 ## Configuration
