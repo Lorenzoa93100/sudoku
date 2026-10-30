@@ -91,6 +91,9 @@
       <button class="pill" type="button" id="tAccountBtn">Mon compte</button>
     </div>
     <div class="tgallery" id="tAvGallery" hidden></div>
+    <div class="thead"><h2 class="th2">Grille classée</h2></div>
+    <p class="sub">Une grille notée, tirée et chronométrée par le serveur. Elle compte dans tes grilles résolues par niveau.</p>
+    <div class="tactions"><button class="pill primary" type="button" id="tGoRanked">Jouer une grille classée</button></div>
     <div class="thead"><h2 class="th2">Tournois</h2></div>
     <div class="tactions">
       <button class="pill primary" type="button" id="tGoCreate">Créer un tournoi</button>
@@ -113,6 +116,7 @@
     </div>
     <div class="pad" id="tPad"></div>
     <p class="tresult" id="tResult" role="status" aria-live="polite" hidden></p>
+    <p class="tstate tabsence" id="tPlayNote" hidden>Grille classée : le chrono du serveur continue même si tu fermes la page. Tu peux revenir la finir avant l'heure de fin.</p>
     <p class="twarn tabsence" id="tPlayWarn" hidden>Garde la page ouverte : 5 minutes sans nouvelles de ton appareil (écran verrouillé, application en arrière-plan) comptent comme un abandon.</p>
     <div class="tactions"><button class="pill" type="button" id="tPlayBack">Retour aux manches</button><button class="pill" type="button" id="tPlayBoard">Classement</button><button class="pill danger" type="button" id="tAbandon" hidden>Abandonner</button></div>
   </div>
@@ -179,15 +183,49 @@
     </div>
   </div>
 
+  <div class="tview" id="vRanked" hidden>
+    <h2 class="th2">Grille classée</h2>
+    <p class="sub">Le serveur tire une grille notée du niveau choisi et mesure ton temps. Elle compte dans tes grilles résolues par niveau (profil et classement).</p>
+    <div id="tRkResume" hidden>
+      <p class="tstate open" id="tRkResumeText" role="status"></p>
+      <div class="tactions">
+        <button class="pill primary" type="button" id="tRkResumeBtn">Reprendre la grille</button>
+        <button class="pill danger" type="button" id="tRkAbandon">Abandonner</button>
+      </div>
+    </div>
+    <p class="tstate" id="tRkQuota"></p>
+    <div id="tRkNew">
+      <p class="tlabel" id="tRkDiffLabel">Niveau</p>
+      <div class="tchoices" id="tRkDiff" role="radiogroup" aria-labelledby="tRkDiffLabel">
+        <button type="button" role="radio" aria-checked="true" data-diff="facile">Facile<span class="tdur">20 min</span></button>
+        <button type="button" role="radio" aria-checked="false" data-diff="moyen">Moyen<span class="tdur">30 min</span></button>
+        <button type="button" role="radio" aria-checked="false" data-diff="difficile">Difficile<span class="tdur">45 min</span></button>
+        <button type="button" role="radio" aria-checked="false" data-diff="expert">Expert<span class="tdur">60 min</span></button>
+        <button type="button" role="radio" aria-checked="false" data-diff="extreme">Extrême<span class="tdur">90 min</span></button>
+      </div>
+      <ul class="trules">
+        <li>Durée maximale selon le niveau (indiquée sous chaque niveau) ; au-delà, la grille est perdue.</li>
+        <li>Le chrono part dès le tirage et continue même page fermée.</li>
+        <li>Abandons et grilles expirées comptent dans le plafond quotidien.</li>
+        <li>Une seule partie à la fois : pas de grille classée pendant un tournoi (salle comprise).</li>
+      </ul>
+      <button class="pill primary tsubmit" type="button" id="tRkStart">Tirer une grille</button>
+    </div>
+    <div class="tactions"><button class="pill" type="button" id="tRkBack">Retour</button></div>
+  </div>
+
   <div class="tview" id="vRanking" hidden>
     <div class="thead"><h2 class="th2">Classement</h2><button class="pill" type="button" id="tRankRefresh">Actualiser</button></div>
-    <p class="sub">Victoires en tournoi et dans les manches. À égalité, la plus ancienne dernière victoire passe devant.</p>
-    <table class="ttable">
-      <thead><tr><th scope="col">Rang</th><th scope="col"><span class="sr">Avatar</span></th><th scope="col">Pseudo</th><th scope="col">Victoires</th></tr></thead>
+    <p class="sub">Trié par victoires (tournois et manches) ; à égalité, la plus ancienne dernière victoire passe devant. Colonnes suivantes : grilles résolues par niveau (grilles classées et tournois).</p>
+    <div class="tscroll">
+    <table class="ttable" id="tRankTable">
+      <thead><tr><th scope="col">Rang</th><th scope="col"><span class="sr">Avatar</span></th><th scope="col">Pseudo</th><th scope="col">Victoires</th><th scope="col" class="lv"><span aria-hidden="true">Fac.</span><span class="sr">Facile</span></th><th scope="col" class="lv"><span aria-hidden="true">Moy.</span><span class="sr">Moyen</span></th><th scope="col" class="lv"><span aria-hidden="true">Dif.</span><span class="sr">Difficile</span></th><th scope="col" class="lv"><span aria-hidden="true">Exp.</span><span class="sr">Expert</span></th><th scope="col" class="lv"><span aria-hidden="true">Ext.</span><span class="sr">Extrême</span></th></tr></thead>
       <tbody id="tRankRows"></tbody>
     </table>
+    </div>
     <p class="sub" id="tRankEmpty" hidden>Personne n'a encore de victoire.</p>
     <p class="tstate" id="tRankMe"></p>
+    <p class="sub tsolvedline" id="tRankMeSolved" hidden></p>
     <div class="tactions"><button class="pill" type="button" id="tRankBack">Retour</button></div>
   </div>
 
@@ -196,6 +234,14 @@
     <div class="tprofile">
       <span class="tav big" id="tAccAv"></span>
       <div><div class="tpseudo" id="tAccName"></div><div class="sub" id="tAccSince"></div></div>
+    </div>
+    <div id="tAccSolved" hidden>
+      <h3 class="th3">Grilles résolues</h3>
+      <p class="sub">Grilles classées et tournois, par niveau.</p>
+      <table class="ttable tsolved">
+        <thead><tr><th scope="col">Niveau</th><th scope="col">Grilles</th></tr></thead>
+        <tbody id="tAccSolvedRows"></tbody>
+      </table>
     </div>
     <div id="tAccWarnings" hidden>
       <h3 class="th3">Avertissements (30 derniers jours)</h3>

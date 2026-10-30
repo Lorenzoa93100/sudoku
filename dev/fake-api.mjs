@@ -41,6 +41,8 @@ export function createFakeApi({ clock = () => Date.now(), maxWrong = 5 } = {}) {
   const rounds = new Map();         // id -> { id, difficulty, puzzle, starts_at, ends_at, min_solve_ms }
   const attempts = new Map();       // `${round}:${user}` -> attempt
   const tournaments = new Map();    // id -> tournoi (voir route POST /v1/tournaments)
+  const rankedGames = new Map();    // id -> grille classée (voir rankedApi)
+  const solvedCounts = new Map();   // userId -> { niveau: grilles résolues } (second score)
   const queued = [];                // réponses forcées pour les prochaines requêtes /v1 (tests)
   const log = [];                   // requêtes reçues : { method, path, origin, body }
   let nextUser = 1, nextRound = 1, nextAttempt = 1;
@@ -67,6 +69,13 @@ export function createFakeApi({ clock = () => Date.now(), maxWrong = 5 } = {}) {
     },
     block(discordId, info) { blocked.set(discordId, info); },
     countdownMs: 5000,              // compte à rebours des tournois (raccourci dans les tests)
+    // Grilles classées (lot 3) : plafond sur 24 h, niveaux dont la réserve est vide, et
+    // legacy = serveur d'avant le lot 3 (pas de champ solved, pas de route /v1/ranked).
+    rankedPerDay: 10,
+    poolEmpty: new Set(),
+    legacy: false,
+    rankedGame(id) { return rankedGames.get(id); },
+    addSolvedCount(uid, level, n = 1) { const c = solvedOf(uid); c[level] += n; },
     tournament(id) { return tournaments.get(id); },
     // Ajoute un joueur (déjà inscrit) dans un tournoi, comme s'il avait saisi le code.
     joinTournament(id, uid) { tournaments.get(id).players.set(uid, { status: "lobby", joined_at: clock(), elapsed: null, finished_at: null, wrong: 0 }); },
@@ -94,6 +103,13 @@ export function createFakeApi({ clock = () => Date.now(), maxWrong = 5 } = {}) {
     return { status, headers: { "content-type": "application/json", ...extra }, body: JSON.stringify(body) };
   }
   const notFound = () => json(404, { error: "not_found" });
+  const LEVELS = ["facile", "moyen", "difficile", "expert", "extreme"];
+  function solvedOf(uid) {
+    if (!solvedCounts.has(uid)) solvedCounts.set(uid, Object.fromEntries(LEVELS.map(l => [l, 0])));
+    return solvedCounts.get(uid);
+  }
+  const withSolved = (obj, uid) => (fake.legacy ? obj : { ...obj, solved: { ...solvedOf(uid) } });
+  const rankedActive = (uid, now) => [...rankedGames.values()].some(g => g.user === uid && g.status === "playing" && g.ends_at > now);
 
   // Requête HTTP simplifiée : { method, path, headers (minuscules), body (chaîne) }.
   function handle(req) {
@@ -179,8 +195,9 @@ export function createFakeApi({ clock = () => Date.now(), maxWrong = 5 } = {}) {
       const r = tournamentApi(req, body, uid, now, strict);
       if (r) return r;
     }
-    if (route === "GET /v1/me") return json(200, { pseudo: user.pseudo, avatar: user.avatar, created_at: user.created_at,
-      wins: wins(now).get(uid) || 0, warnings: user.warnings });
+    if (!fake.legacy && (req.path === "/v1/ranked" || req.path.startsWith("/v1/ranked/"))) return rankedApi(req, body, uid, now, strict);
+    if (route === "GET /v1/me") return json(200, withSolved({ pseudo: user.pseudo, avatar: user.avatar, created_at: user.created_at,
+      wins: wins(now).get(uid) || 0, warnings: user.warnings }, uid));
     if (route === "POST /v1/auth/logout") { tokens.delete(t); return json(200, { ok: true }); }
     if (route === "POST /v1/auth/logout-all") { for (const [k, v] of tokens) if (v === uid) tokens.delete(k); return json(200, { ok: true }); }
     if (route === "POST /v1/me/delete") {
@@ -298,15 +315,16 @@ export function createFakeApi({ clock = () => Date.now(), maxWrong = 5 } = {}) {
       }
       const order = [...wins.entries()].sort((a, b) => b[1] - a[1]);
       const entries = order.slice(0, 10).map(([id, n], k) => { const u = users.get(id);
-        return { rank: k + 1, pseudo: u.pseudo, avatar: u.avatar, wins: n, deleted: u.deleted, me: id === uid }; });
+        return withSolved({ rank: k + 1, pseudo: u.pseudo, avatar: u.avatar, wins: n, deleted: u.deleted, me: id === uid }, id); });
       const k = order.findIndex(([id]) => id === uid);
-      return json(200, { entries, players: order.length, me: { rank: k >= 0 ? k + 1 : null, wins: wins.get(uid) || 0 } });
+      return json(200, { entries, players: order.length, me: withSolved({ rank: k >= 0 ? k + 1 : null, wins: wins.get(uid) || 0 }, uid) });
     }
     if (route === "POST /v1/tournaments") {
       if (!strict(["difficulty", "max_players"], ["difficulty", "max_players"]) || !["facile", "moyen", "difficile"].includes(body.difficulty)
         || !Number.isInteger(body.max_players) || body.max_players < 2 || body.max_players > 10) return json(422, { error: "invalid_request" });
       if ([...tournaments.values()].some(t => ["lobby", "running"].includes(t.state) && ["lobby", "playing"].includes((t.players.get(uid) || {}).status)))
         return json(409, { error: "already_in_tournament" });
+      if (rankedActive(uid, now)) return json(409, { error: "ranked_in_progress" });
       const id = nextTournament++;
       const code = [...crypto.getRandomValues(new Uint8Array(10))].map(x => CODE_ABC[x % CODE_ABC.length]).join("");
       const t = { id, code, name: "Renard rusé", difficulty: body.difficulty, max_players: body.max_players, creator: uid,
@@ -322,6 +340,7 @@ export function createFakeApi({ clock = () => Date.now(), maxWrong = 5 } = {}) {
       if (!t.players.has(uid)) {
         if (t.state !== "lobby") return json(409, { error: "tournament_closed" });
         if (t.players.size >= t.max_players) return json(409, { error: "tournament_full" });
+        if (rankedActive(uid, now)) return json(409, { error: "ranked_in_progress" });
         fake.joinTournament(t.id, uid);
       }
       return json(200, tView(t, uid, now));
@@ -359,11 +378,68 @@ export function createFakeApi({ clock = () => Date.now(), maxWrong = 5 } = {}) {
       if (me.status !== "playing") return json(409, { error: "already_finished" });
       if (isValidCompletion(t.puzzle, body.grid)) {
         Object.assign(me, { status: "solved", elapsed: now - t.starts_at, finished_at: now }); tRefresh(t, now);
+        solvedOf(uid)[t.difficulty]++;
         return json(200, { result: "solved", elapsed_ms: me.elapsed, under_review: false });
       }
       me.wrong++;
       if (me.wrong >= maxWrong) { me.status = "failed"; tRefresh(t, now); return json(200, { result: "failed" }); }
       return json(200, { result: "incorrect", attempts_left: maxWrong - me.wrong });
+    }
+    return json(404, { error: "not_found" });
+  }
+  // --- Grilles classées : même comportement visible que l'API (lot 3).
+  const RK_MIN = { facile: 20, moyen: 30, difficile: 45, expert: 60, extreme: 90 };
+  let nextRanked = 1;
+  function rkExpire(uid, now) {
+    for (const g of rankedGames.values()) if (g.user === uid && g.status === "playing" && now >= g.ends_at) Object.assign(g, { status: "expired", finished_at: g.ends_at });
+  }
+  const rkView = (g, now) => ({ id: g.id, difficulty: g.difficulty, status: g.status, now, started_at: g.started_at, ends_at: g.ends_at,
+    puzzle: g.puzzle, elapsed_ms: g.elapsed_ms, attempts_left: maxWrong - g.wrong });
+  function rkQuota(uid, now) {
+    const rows = [...rankedGames.values()].filter(g => g.user === uid && g.started_at > now - 86_400_000).sort((a, b) => b.started_at - a.started_at);
+    return [rows.length, rows.length >= fake.rankedPerDay ? rows[fake.rankedPerDay - 1].started_at + 86_400_000 : null];
+  }
+  function rankedApi(req, body, uid, now, strict) {
+    const route = `${req.method} ${req.path.replace(/\/\d+(\/|$)/, "/:id$1")}`;
+    rkExpire(uid, now);
+    const active = [...rankedGames.values()].find(g => g.user === uid && g.status === "playing");
+    if (route === "GET /v1/ranked") {
+      const [today, next] = rkQuota(uid, now);
+      return json(200, { now, game: active ? rkView(active, now) : null, today, per_day: fake.rankedPerDay, next_slot_at: next });
+    }
+    if (route === "POST /v1/ranked/start") {
+      if (!strict(["difficulty"], ["difficulty"]) || !LEVELS.includes(body.difficulty)) return json(422, { error: "invalid_request" });
+      if (active) return json(200, { ...rkView(active, now), resumed: true });
+      if ([...tournaments.values()].some(t => ["lobby", "running"].includes(t.state) && ["lobby", "playing"].includes((t.players.get(uid) || {}).status)))
+        return json(409, { error: "already_in_tournament" });
+      const [, next] = rkQuota(uid, now);
+      if (next !== null) return json(429, { error: "ranked_daily_limit" }, { "retry-after": String(Math.ceil((next - now) / 1000)) });
+      if (fake.poolEmpty.has(body.difficulty)) return json(503, { error: "pool_empty" }, { "retry-after": "3600" });
+      const g = { id: nextRanked++, user: uid, difficulty: body.difficulty, puzzle: PUZZLE, status: "playing", started_at: now,
+                  ends_at: now + RK_MIN[body.difficulty] * 60_000, finished_at: null, elapsed_ms: null, wrong: 0, flagged: false,
+                  min_solve_ms: Math.max(20_000, 600 * PUZZLE.split("").filter(c => c === "0").length) };
+      rankedGames.set(g.id, g);
+      return json(200, { ...rkView(g, now), resumed: false });
+    }
+    const gid = Number((/^\/v1\/ranked\/(\d+)\//.exec(req.path) || [])[1]);
+    const g = rankedGames.get(gid);
+    if (!g || g.user !== uid) return json(404, { error: "not_found" });
+    if (route === "POST /v1/ranked/:id/abandon") {
+      if (g.status !== "playing") return json(409, { error: "already_finished" });
+      Object.assign(g, { status: "abandoned", finished_at: now }); return json(200, { result: "abandoned" });
+    }
+    if (route === "POST /v1/ranked/:id/submit") {
+      if (!strict(["grid"], ["grid"]) || typeof body.grid !== "string" || !/^[1-9]{81}$/.test(body.grid)) return json(422, { error: "invalid_request" });
+      if (g.status !== "playing") return json(409, { error: "already_finished" });
+      if (isValidCompletion(g.puzzle, body.grid)) {
+        const elapsed = now - g.started_at;
+        Object.assign(g, { status: "solved", finished_at: now, elapsed_ms: elapsed, flagged: elapsed < g.min_solve_ms });
+        if (!g.flagged) solvedOf(uid)[g.difficulty]++;  // signalée : ni comptée, ni annoncée au joueur
+        return json(200, { result: "solved", elapsed_ms: elapsed });
+      }
+      g.wrong++;
+      if (g.wrong >= maxWrong) { Object.assign(g, { status: "failed", finished_at: now }); return json(200, { result: "failed" }); }
+      return json(200, { result: "incorrect", attempts_left: maxWrong - g.wrong });
     }
     return json(404, { error: "not_found" });
   }

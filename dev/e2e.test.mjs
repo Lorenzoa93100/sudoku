@@ -230,7 +230,7 @@ describe("écran d'accueil", () => {
     assert.equal(await page.$$eval('#sheet a[href="#tournoi"]', a => a.length), 0, "plus de lien tournoi sur l'accueil");
     assert.equal(await page.evaluate(() => document.getElementById("overlay").dataset.dismiss), "", "pas de fermeture sans choix");
     await page.click('.menu.home button:has-text("Nouvelle partie")');
-    assert.deepEqual(await homeButtons(page), ["Solo", "Tournoi"]);
+    assert.deepEqual(await homeButtons(page), ["Solo", "Tournoi", "Grille classée"]);
     await page.click('.menu.home button:has-text("Solo")');
     assert.equal(await page.$$eval("[data-new]", b => b.length), 5, "choix de difficulté actuel");
     await watch.check(); await ctx.close();
@@ -254,7 +254,7 @@ describe("écran d'accueil", () => {
     await page.click('.menu.home button:has-text("Nouvelle partie")');
     await page.click('.menu.home button:has-text("Tournoi")');
     await page.click(".homeback");
-    assert.deepEqual(await homeButtons(page), ["Solo", "Tournoi"]);
+    assert.deepEqual(await homeButtons(page), ["Solo", "Tournoi", "Grille classée"]);
     await page.click(".homeback");
     assert.deepEqual(await homeButtons(page), ["Nouvelle partie", "Continuer la partie", "Classement"]);
     assert.equal(await page.$$eval(".homeback", b => b.length), 0, "pas de Retour sur l'accueil");
@@ -862,8 +862,10 @@ describe("tournois créés par les joueurs", () => {
     const { page, ctx, watch } = await as(alice, "");
     await page.click('.menu.home button:has-text("Classement")');
     await page.waitForSelector("#vRanking:not([hidden])");
-    const rows = await page.$$eval("#tRankRows tr", trs => trs.map(tr => [...tr.children].map(td => td.textContent)));
+    const rows = await page.$$eval("#tRankRows tr", trs => trs.map(tr => [...tr.children].slice(0, 4).map(td => td.textContent)));
     assert.deepEqual(rows, [["1", "🦁", "Zoé", "9"], ["2", "👤", "Joueur supprimé", "7"]]);
+    // Réponse sans second score (serveur d'avant le lot 3) : colonnes par niveau masquées.
+    assert.equal(await page.locator("#tRankTable th.lv >> nth=0").isVisible(), false);
     assert.match(await page.textContent("#tRankMe"), /12ᵉ sur 12 \(1 victoire\)/);
     await page.click("#tBack");
     await page.waitForSelector("#app:not([hidden])");
@@ -915,3 +917,205 @@ describe("tournois créés par les joueurs", () => {
   });
 });
 
+describe("grilles classées et second score (lot 3)", () => {
+  const as = (user, path = "#tournoi") =>
+    open(path, { init: `localStorage.setItem(${JSON.stringify(TOKEN_KEY)}, ${JSON.stringify(user.token)})` });
+  const call = (user, method, path, body) => JSON.parse(fake.handle({ method, path, body: body ? JSON.stringify(body) : "",
+    headers: { origin: FRONT_ORIGIN, authorization: `Bearer ${user.token}`, ...(body ? { "content-type": "application/json" } : {}) } }).body);
+  const hhmm = (page, ms) => page.evaluate(t => new Intl.DateTimeFormat("fr-FR", { hour: "2-digit", minute: "2-digit" }).format(new Date(t)), ms);
+  let shift;
+  beforeEach(() => { shift = 0; fake = createFakeApi({ clock: () => Date.now() + shift }); });
+
+  test("accueil → Nouvelle partie → Grille classée : connexion d'abord, puis l'écran ; #tournoi-classee remplacé", async () => {
+    const { page, ctx, watch } = await open();
+    await page.click('.menu.home button:has-text("Nouvelle partie")');
+    await page.click('.menu.home button:has-text("Grille classée")');
+    await page.waitForSelector("#vLogin:not([hidden])");
+    assert.equal(await page.evaluate(() => location.hash), "#tournoi");
+    assert.equal(fake.log.filter(r => r.path.startsWith("/v1/ranked")).length, 0, "rien avant la connexion");
+    await register(page);
+    await page.waitForSelector("#vRanked:not([hidden])");
+    assert.match(await page.textContent("#tRkQuota"), /Grilles classées sur 24 h : 0 \/ 10\./);
+    assert.deepEqual(await page.$$eval("#tRkDiff .tdur", d => d.map(x => x.textContent)), ["20 min", "30 min", "45 min", "60 min", "90 min"]);
+    assert.equal(await page.isVisible("#tRkResume"), false);
+    await watch.check(); await ctx.close();
+  });
+
+  test("partie : tirage, reprise annoncée avec l'heure de fin après rechargement, saisie gardée, seule la grille part", async () => {
+    const alice = fake.addUser("Alice", "dragon");
+    const { page, ctx, watch } = await as(alice, "#tournoi-classee");
+    await page.waitForSelector("#vRanked:not([hidden])");
+    await page.click('#tRkDiff [data-diff="difficile"]');
+    await page.click("#tRkStart");
+    await page.waitForSelector("#vPlay:not([hidden])");
+    const g = fake.rankedGame(1);
+    assert.equal(g.difficulty, "difficile");
+    assert.equal(g.ends_at - g.started_at, 45 * 60_000);
+    const end = await hhmm(page, g.ends_at);
+    assert.equal(await page.textContent("#tPlayLevel"), `Grille classée · Difficile · fin à ${end}`);
+    assert.equal(await page.isVisible("#tPlayNote"), true);
+    assert.equal(await page.isVisible("#tPlayBoard"), false);
+    assert.equal(await page.isVisible("#tAbandon"), true);
+    const first = PUZZLE.indexOf("0");
+    await page.click(`#tBoard .cell >> nth=${first}`);
+    await page.click(`#tPad .tnum >> nth=${Number(SOLUTION[first]) - 1}`);
+    // Rechargement : le salon puis l'écran de la grille classée annoncent la partie en cours.
+    await page.goto(servers.url + "#tournoi-classee");
+    await page.waitForSelector("#vRanked:not([hidden])");
+    const banner = await page.textContent("#tRkResumeText");
+    assert.match(banner, new RegExp(`grille classée en cours : Difficile, commencée à ${await hhmm(page, g.started_at)}\\. Fin à ${end} \\(encore 4[45] min\\)`));
+    assert.equal(await page.isVisible("#tRkNew"), false, "pas de nouveau tirage pendant une partie");
+    await page.click("#tRkResumeBtn");
+    await page.waitForSelector("#vPlay:not([hidden])");
+    assert.equal(await page.textContent(`#tBoard .cell >> nth=${first}`), SOLUTION[first], "saisie retrouvée");
+    shift = 60_000;  // au-dessus du plancher
+    for (let i = first + 1; i < 81; i++) {  // la première case est déjà remplie (un 2e appui l'effacerait)
+      if (PUZZLE[i] !== "0") continue;
+      await page.click(`#tBoard .cell >> nth=${i}`);
+      await page.click(`#tPad .tnum >> nth=${Number(SOLUTION[i]) - 1}`);
+    }
+    await page.click("#tSubmit");
+    await page.locator("#tResult").getByText("Grille correcte ! Temps mesuré par le serveur").waitFor();
+    const sent = fake.log.filter(r => r.path === "/v1/ranked/1/submit");
+    assert.deepEqual(sent.map(r => JSON.parse(r.body)), [{ grid: SOLUTION }]);
+    assert.equal(await page.isVisible("#tAbandon"), false);
+    assert.equal(call(alice, "GET", "/v1/me").solved.difficile, 1);
+    assert.equal(await page.evaluate(k => localStorage.getItem(k), "sudoku-tournoi-grille-r1"), null, "sauvegarde locale effacée");
+    await watch.check(); await ctx.close();
+  });
+
+  test("temps sous le plancher : même message pour le joueur, non comptée", async () => {
+    const alice = fake.addUser("Alice");
+    const { page, ctx } = await as(alice, "#tournoi-classee");
+    await page.click("#tRkStart");
+    await page.waitForSelector("#vPlay:not([hidden])");
+    await fillGrid(page, SOLUTION);
+    await page.click("#tSubmit");
+    await page.locator("#tResult").getByText("Grille correcte ! Temps mesuré par le serveur").waitFor();
+    assert.doesNotMatch(await page.textContent("#tResult"), /rapide|vérifi|plancher|compt/i, "aucun indice sur le contrôle");
+    assert.equal(fake.rankedGame(1).flagged, true);
+    assert.equal(call(alice, "GET", "/v1/me").solved.facile, 0);
+    await ctx.close();
+  });
+
+  test("partie déjà en cours ailleurs : « Tirer » la reprend et l'annonce", async () => {
+    const alice = fake.addUser("Alice");
+    const { page, ctx } = await as(alice, "#tournoi-classee");
+    await page.waitForSelector("#vRanked:not([hidden])");
+    call(alice, "POST", "/v1/ranked/start", { difficulty: "expert" });  // autre onglet
+    await page.click("#tRkStart");
+    await page.waitForSelector("#vPlay:not([hidden])");
+    const end = await hhmm(page, fake.rankedGame(1).ends_at);
+    assert.equal(await page.textContent("#tMsg"), `Tu avais déjà une grille classée en cours (Expert) : la voici, son chrono a continué. Fin à ${end}.`);
+    await ctx.close();
+  });
+
+  test("abandon (bandeau et partie) et plafond quotidien : heure de la prochaine grille, le reste du site utilisable", async () => {
+    fake.rankedPerDay = 2;
+    const alice = fake.addUser("Alice");
+    const { page, ctx, watch } = await as(alice, "#tournoi-classee");
+    page.on("dialog", d => d.accept());
+    await page.click("#tRkStart");
+    await page.waitForSelector("#vPlay:not([hidden])");
+    await page.click("#tAbandon");
+    await page.waitForSelector("#vRanked:not([hidden])");
+    await msg(page).getByText("Grille classée abandonnée.").waitFor();
+    assert.match(await page.textContent("#tRkQuota"), /1 \/ 2\./);
+    await page.click("#tRkStart");
+    await page.waitForSelector("#vPlay:not([hidden])");
+    await page.click("#tPlayBack");
+    await page.waitForSelector("#tRkResume:not([hidden])");
+    await page.click("#tRkAbandon");
+    await msg(page).getByText("Grille classée abandonnée.").waitFor();
+    const next = await hhmm(page, fake.rankedGame(1).started_at + 86_400_000);
+    assert.match(await page.textContent("#tRkQuota"), new RegExp(`2 / 2\\. Plafond atteint : prochaine grille possible à ${next}( demain)?\\.`));
+    assert.equal(await page.isDisabled("#tRkStart"), true);
+    // Forcé par le serveur (autre appareil) : 429 → message et quota relu, sans blocage global.
+    await page.evaluate(() => { document.getElementById("tRkStart").disabled = false; });
+    await page.click("#tRkStart");
+    await msg(page).getByText("plafond de grilles classées").waitFor();
+    await page.click("#tRkBack");
+    await page.waitForSelector("#vLobby:not([hidden])");
+    await watch.check(); await ctx.close();
+  });
+
+  test("temps écoulé : la partie disparaît du bandeau, la grille ne peut plus être validée", async () => {
+    const alice = fake.addUser("Alice");
+    const { page, ctx } = await as(alice, "#tournoi-classee");
+    await page.click("#tRkStart");
+    await page.waitForSelector("#vPlay:not([hidden])");
+    shift = 21 * 60_000;
+    await page.click("#tPlayBack");
+    await page.waitForSelector("#vRanked:not([hidden])");
+    assert.equal(await page.isVisible("#tRkResume"), false);
+    assert.equal(fake.rankedGame(1).status, "expired");
+    await ctx.close();
+  });
+
+  test("réserve vide, tournoi en cours, grille classée en cours : messages dédiés", async () => {
+    const alice = fake.addUser("Alice");
+    fake.poolEmpty.add("extreme");
+    const { page, ctx } = await as(alice, "#tournoi-classee");
+    await page.click('#tRkDiff [data-diff="extreme"]');
+    await page.click("#tRkStart");
+    await msg(page).getByText("Plus de grille classée disponible à ce niveau").waitFor();
+    call(alice, "POST", "/v1/tournaments", { difficulty: "facile", max_players: 2 });
+    await page.click('#tRkDiff [data-diff="facile"]');
+    await page.click("#tRkStart");
+    await msg(page).getByText("Tu es dans un tournoi (salle d'attente ou partie)").waitFor();
+    // Inverse : grille classée en cours, création de tournoi refusée.
+    const bob = fake.addUser("Bob");
+    call(bob, "POST", "/v1/ranked/start", { difficulty: "moyen" });
+    const B = await as(bob);
+    await B.page.click("#tGoCreate"); await B.page.click("#tCreateBtn");
+    await msg(B.page).getByText("Tu as une grille classée en cours").waitFor();
+    await B.ctx.close(); await ctx.close();
+  });
+
+  test("second score : salon, Mon compte, colonnes du classement ; à 360 px, pas de défilement de la page", async () => {
+    const alice = fake.addUser("Alice", "dragon"), zoe = fake.addUser("Zoé", "lion");
+    fake.addSolvedCount(alice.id, "facile", 4); fake.addSolvedCount(alice.id, "expert", 1);
+    fake.addSolvedCount(zoe.id, "extreme", 12);
+    // Zoé gagne un tournoi contre Alice.
+    fake.countdownMs = 0;
+    const t = call(zoe, "POST", "/v1/tournaments", { difficulty: "facile", max_players: 2 });
+    call(alice, "POST", "/v1/tournaments/join", { code: t.code });
+    call(zoe, "POST", `/v1/tournaments/${t.id}/start`);
+    call(zoe, "POST", `/v1/tournaments/${t.id}/submit`, { grid: SOLUTION });
+    call(alice, "POST", `/v1/tournaments/${t.id}/submit`, { grid: SOLUTION });
+    const { page, ctx, watch } = await as(alice);
+    await page.setViewportSize({ width: 360, height: 740 });
+    await page.waitForSelector("#vLobby:not([hidden])");
+    assert.equal(await page.textContent("#tProfWins"), "0 victoire · 6 grilles résolues");
+    await page.click("#tAccountBtn");
+    await page.waitForSelector("#vAccount:not([hidden])");
+    const acc = await page.$$eval("#tAccSolvedRows tr", trs => trs.map(tr => [...tr.children].map(td => td.textContent)));
+    assert.deepEqual(acc, [["Facile", "5"], ["Moyen", "0"], ["Difficile", "0"], ["Expert", "1"], ["Extrême", "0"], ["Total", "6"]]);
+    await page.click("#tAccountBack");
+    await page.click("#tGoRanking");
+    await page.waitForSelector("#vRanking:not([hidden])");
+    const rows = await page.$$eval("#tRankRows tr", trs => trs.map(tr => [...tr.children].map(td => td.textContent)));
+    assert.deepEqual(rows, [["1", "🦁", "Zoé", "1", "1", "0", "0", "0", "12"]]);
+    assert.equal(await page.locator("#tRankTable th.lv >> nth=0").isVisible(), true);
+    assert.equal(await page.textContent("#tRankMeSolved"), "Tes grilles résolues : Facile 5 · Moyen 0 · Difficile 0 · Expert 1 · Extrême 0.");
+    assert.equal(await page.evaluate(() => document.documentElement.scrollWidth <= window.innerWidth), true, "aucun défilement horizontal de la page");
+    await watch.check(); await ctx.close();
+  });
+
+  test("serveur d'avant le lot 3 : pas de second score, rien ne casse ; second score mal formé refusé", async () => {
+    fake.legacy = true;
+    const alice = fake.addUser("Alice");
+    const { page, ctx, watch } = await as(alice);
+    await page.waitForSelector("#vLobby:not([hidden])");
+    assert.equal(await page.textContent("#tProfWins"), "0 victoire");
+    await page.click("#tAccountBtn");
+    await page.waitForSelector("#vAccount:not([hidden])");
+    assert.equal(await page.isVisible("#tAccSolved"), false);
+    fake.legacy = false;
+    fake.queue({ status: 200, body: { pseudo: "Alice", avatar: "chat", created_at: 1, wins: 0, warnings: [],
+      solved: { facile: 1, moyen: 0, difficile: 0, expert: 0, extreme: 0, bonus: 99 } } });
+    await page.click("#tAccountBack");
+    await msg(page).getByText("Réponse inattendue du serveur").waitFor();
+    await watch.check(); await ctx.close();
+  });
+});

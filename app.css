@@ -432,3 +432,18 @@ select.tinput{font-size:16px;padding:10px 12px}
 .tplayers .tst{color:var(--muted);font-size:13.5px}
 .tabsence{margin:10px 0}
 #tRoomCode{font-size:22px;letter-spacing:2px}
+
+/* ---------- Grille classée et second score (lot 3) ---------- */
+.tchoices .tdur{display:block;color:var(--muted);font-size:12.5px;font-weight:500;margin-top:2px}
+.trules{margin:10px 0 4px;padding-left:18px;font-size:14px;line-height:1.5;color:var(--muted)}
+#tRkResume{margin:10px 0 4px}
+#tRkQuota{margin:12px 0 0}
+#tRkQuota.full{background:var(--wrong-soft)}
+/* Classement : défilement horizontal à l'intérieur du cadre, jamais de la page. */
+.tscroll{position:relative;max-width:100%;overflow-x:auto;-webkit-overflow-scrolling:touch}  /* relative : les libellés .sr restent dans le cadre */
+.tscroll .ttable th.lv,.tscroll .ttable td.lv{text-align:right;white-space:nowrap;padding-left:8px}
+.tscroll .ttable td.tp{min-width:7.5em;position:sticky;left:0;background:var(--bg)}
+.ttable.nolv .lv{display:none}
+.tsolved{max-width:320px}
+.tsolved td:last-child,.tsolved th:last-child{text-align:right}
+.tsolvedline{margin-top:8px}

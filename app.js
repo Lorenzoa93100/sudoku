@@ -619,8 +619,9 @@ function showMenu() {
     <button data-act="help">Comment marchent les aides</button>
     <a href="#tournoi">Mode tournoi entre amis</a></div>`);
   // Classement global (tournoi.js) : ajouté par le DOM.
+  const ranked = document.createElement("a"); ranked.href = "#tournoi-classee"; ranked.textContent = "Grille classée";
   const rank = document.createElement("a"); rank.href = "#tournoi-classement"; rank.textContent = "Classement";
-  sheet.querySelector(".menu").append(rank);
+  sheet.querySelector(".menu").append(ranked, rank);
 }
 function toggleRow(key, title, desc) { return `<label class="row"><div><div class="t">${title}</div>${desc ? `<div class="d2">${desc}</div>` : ""}</div><input type="checkbox" class="switch" data-set="${key}" ${settings[key] ? "checked" : ""}></label>`; }
 function showSettings() {
@@ -872,7 +873,7 @@ function validSavedGame(g) {
   return isCount(g.errors) && isCount(g.hints) && isCount(g.time) && typeof g.done === "boolean" && typeof g.lost === "boolean";
 }
 // Écran d'accueil et choix du mode (construits par le DOM, sans innerHTML).
-// Accueil → Nouvelle partie → Solo (choix de difficulté) | Tournoi → Rejoindre | Créer (bientôt).
+// Accueil → Nouvelle partie → Solo (choix de difficulté) | Tournoi → Rejoindre | Créer | Grille classée.
 function homeButton(label, sub, onClick) {
   const b = document.createElement("button"); b.type = "button"; b.textContent = label;
   if (sub) { const s = document.createElement("span"); s.className = "homesub"; s.textContent = sub; b.append(s); }
@@ -902,6 +903,7 @@ function showModeChoice(canContinue) {
   homeSheet("Nouvelle partie", "Seul ou entre amis ?", [
     homeButton("Solo", "Choisis la difficulté", () => showNewGame(!!G && !G.done && !G.lost)),
     homeButton("Tournoi", "Contre tes amis", () => showTournamentChoice(canContinue)),
+    homeButton("Grille classée", "Chronométrée par le serveur, comptée par niveau", () => goTournoi("#tournoi-classee")),
   ], () => showHome(canContinue));
 }
 function showTournamentChoice(canContinue) {

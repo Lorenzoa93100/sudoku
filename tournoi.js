@@ -23,6 +23,7 @@ const AVATARS = {
   abeille: "🐝", papillon: "🦋", licorne: "🦄", dragon: "🐉", fusee: "🚀", etoile: "⭐", cactus: "🌵"
 };
 const DIFF_NAMES = { facile: "Facile", moyen: "Moyen", difficile: "Difficile", expert: "Expert", extreme: "Extrême" };
+const LEVELS = Object.keys(DIFF_NAMES);
 const RE_TOKEN = /^[A-Za-z0-9_-]{43}$/, RE_PSEUDO = /^[A-Za-z0-9_-]{3,20}$/;
 // Connexion Discord : seule destination de navigation acceptée pour l'URL rendue par l'API.
 const DISCORD_AUTHORIZE = "https://discord.com/oauth2/authorize?";
@@ -93,7 +94,9 @@ async function api(method, path, body) {
     // Retry-After n'est lisible que si le serveur l'expose en CORS ; sinon 30 s par défaut.
     const s = parseInt(res.headers.get("retry-after"), 10);
     const wait = Number.isFinite(s) && s > 0 ? Math.min(s, 3600) : 30;
-    cooldownUntil = Date.now() + wait * 1000;
+    // Plafond quotidien des grilles classées : un quota, pas un excès de requêtes. Le reste du
+    // site reste utilisable ; l'écran affiche l'heure de la prochaine grille possible.
+    if (code !== "ranked_daily_limit") cooldownUntil = Date.now() + wait * 1000;
     throw new ApiError("rate", 429, code, wait);
   }
   throw new ApiError("http", res.status, code, 0, data);
@@ -124,13 +127,16 @@ const CODE_MESSAGES = {
   round_not_open: "Cette manche n'a pas encore commencé.",
   round_closed: "Cette manche est terminée.",
   already_played: "Tu as déjà joué cette manche (un seul essai).",
-  not_started: "Démarre la manche avant de valider."
+  not_started: "Démarre la manche avant de valider.",
+  ranked_daily_limit: "Tu as atteint le plafond de grilles classées sur 24 h.",
+  ranked_in_progress: "Tu as une grille classée en cours : termine-la ou abandonne-la avant de jouer un tournoi.",
+  pool_empty: "Plus de grille classée disponible à ce niveau pour le moment. Choisis un autre niveau, ou réessaie plus tard."
 };
 function messageFor(err) {
   if (!(err instanceof ApiError)) return GENERIC;
   if (err.kind === "config") return "Mode tournoi indisponible : adresse du serveur introuvable.";
   if (err.kind === "network") return "Serveur injoignable. Vérifie ta connexion, puis réessaie.";
-  if (err.kind === "rate" && ["signups_closed", "abandon_cooldown", "tournament_daily_limit", "tournaments_full"].includes(err.code)) return CODE_MESSAGES[err.code];
+  if (err.kind === "rate" && ["signups_closed", "abandon_cooldown", "tournament_daily_limit", "tournaments_full", "ranked_daily_limit"].includes(err.code)) return CODE_MESSAGES[err.code];
   if (err.kind === "rate") return `Trop de requêtes. Patiente ${err.wait} s avant de réessayer.`;
   if (err.kind === "unexpected") return "Réponse inattendue du serveur. Réessaie plus tard.";
   if (err.code && CODE_MESSAGES[err.code]) return CODE_MESSAGES[err.code];
@@ -143,10 +149,20 @@ function messageFor(err) {
 const isCount = n => Number.isSafeInteger(n) && n >= 0;
 const isText = (s, max) => typeof s === "string" && s.length > 0 && s.length <= max;
 function check(ok) { if (!ok) throw new ApiError("unexpected"); }
+// Second score : grilles résolues par niveau. Absent d'un serveur antérieur au lot 3 (null :
+// colonnes masquées) ; s'il est là, exactement les 5 niveaux, chacun un entier positif.
+function checkSolved(v) {
+  if (v === undefined) return null;
+  check(v && typeof v === "object" && !Array.isArray(v) && Object.keys(v).length === LEVELS.length
+    && LEVELS.every(l => isCount(v[l])));
+  return v;
+}
+const solvedTotal = v => LEVELS.reduce((n, l) => n + v[l], 0);
 function checkMe(d) {
   check(isText(d.pseudo, 40) && isText(d.avatar, 32) && isCount(d.wins) && isCount(d.created_at)
     && Array.isArray(d.warnings) && d.warnings.length <= 10);
   for (const w of d.warnings) check(w && isCount(w.created_at) && typeof w.reason === "string");
+  d.solved = checkSolved(d.solved);
   return d;
 }
 function checkRounds(d) {
@@ -201,7 +217,7 @@ function fmtClock(ms) {
 const dateFmt = new Intl.DateTimeFormat("fr-FR", { weekday: "short", day: "numeric", month: "short", hour: "2-digit", minute: "2-digit" });
 const fmtDate = ms => dateFmt.format(new Date(ms));
 
-const VIEWS = ["vLogin", "vSignup", "vLobby", "vPlay", "vBoard", "vAccount", "vCreate", "vJoin", "vRoom", "vRanking"];
+const VIEWS = ["vLogin", "vSignup", "vLobby", "vPlay", "vBoard", "vAccount", "vCreate", "vJoin", "vRoom", "vRanking", "vRanked"];
 let current = null;
 function show(view) { current = view; for (const v of VIEWS) $(v).hidden = v !== view; }
 function say(text, kind) {
@@ -255,7 +271,9 @@ function setMe(d) {
   me = d;
   $("tMeAv").textContent = emoji(d.avatar); $("tMeName").textContent = d.pseudo; $("tMe").hidden = false;
   $("tProfAv").textContent = emoji(d.avatar); $("tProfName").textContent = d.pseudo;
-  $("tProfWins").textContent = `${d.wins} victoire${d.wins > 1 ? "s" : ""}`;
+  const n = d.solved ? solvedTotal(d.solved) : null;
+  $("tProfWins").textContent = `${d.wins} victoire${d.wins > 1 ? "s" : ""}`
+    + (n === null ? "" : ` · ${n} grille${n > 1 ? "s" : ""} résolue${n > 1 ? "s" : ""}`);
 }
 function startSession(d, welcome) {
   check(RE_TOKEN.test(d.token) && isText(d.pseudo, 40) && isText(d.avatar, 32));
@@ -391,6 +409,12 @@ function showAccount() {
     list.append(el("li", null, `${dayFmt.format(new Date(w.created_at))} : ${why}`));
   }
   $("tAccWarnings").hidden = me.warnings.length === 0;
+  const rows = $("tAccSolvedRows"); rows.replaceChildren();
+  if (me.solved) {
+    for (const l of LEVELS) { const tr = el("tr"); tr.append(el("td", null, DIFF_NAMES[l]), el("td", null, String(me.solved[l]))); rows.append(tr); }
+    const tot = el("tr", "me"); tot.append(el("td", null, "Total"), el("td", null, String(solvedTotal(me.solved)))); rows.append(tot);
+  }
+  $("tAccSolved").hidden = !me.solved;
   $("tDeleteConfirm").value = ""; $("tDeleteBtn").disabled = true;
   show("vAccount"); say("");
 }
@@ -511,13 +535,14 @@ function startRound(id, difficulty, btn) {
 }
 // Écran de jeu commun aux manches et aux tournois.
 function openPlay(title) {
-  const t = P.kind === "tournament";
+  const t = P.kind === "tournament", r = P.kind === "ranked";
   selected = Math.max(0, P.puzzle.findIndex(x => !x)); noteMode = false;
   $("tPlayLevel").textContent = title;
   $("tResult").hidden = true;
-  $("tPlayWarn").hidden = !t; $("tAbandon").hidden = !t;
-  $("tPlayBack").textContent = t ? "Salle du tournoi" : "Retour aux manches";
+  $("tPlayWarn").hidden = !t; $("tPlayNote").hidden = !r; $("tAbandon").hidden = !(t || r) || P.done;
+  $("tPlayBack").textContent = t ? "Salle du tournoi" : r ? "Retour" : "Retour aux manches";
   $("tPlayBoard").textContent = t ? "Joueurs" : "Classement";
+  $("tPlayBoard").hidden = r;
   show("vPlay"); say(""); renderPlay(); tick();
   clearInterval(clock); clock = setInterval(tick, 1000);  // affichage seul, aucune requête
 }
@@ -565,7 +590,7 @@ function renderPlay() {
   updateSubmit();
 }
 function result(text, kind) { const r = $("tResult"); r.textContent = text; r.className = `tresult ${kind}`; r.hidden = false; }
-function finish() { P.done = true; storage.del(P.gridKey); updateSubmit(); if (P.kind === "tournament") $("tAbandon").hidden = true; }
+function finish() { P.done = true; storage.del(P.gridKey); updateSubmit(); $("tAbandon").hidden = true; }
 $("tErase").addEventListener("click", erase);
 $("tNotes").addEventListener("click", () => { noteMode = !noteMode; renderPlay(); });
 $("tSubmit").addEventListener("click", () => {
@@ -575,9 +600,14 @@ $("tSubmit").addEventListener("click", () => {
   run([$("tSubmit")], async () => {
     try {
       // Seule la grille part : jamais de temps, le serveur le mesure lui-même.
-      const path = P.kind === "tournament" ? `/v1/tournaments/${P.id}/submit` : `/v1/rounds/${P.id}/submit`;
-      const d = checkSubmit(await api("POST", path, { grid }));
-      if (d.result === "solved") {
+      const path = P.kind === "tournament" ? `/v1/tournaments/${P.id}/submit`
+        : P.kind === "ranked" ? `/v1/ranked/${P.id}/submit` : `/v1/rounds/${P.id}/submit`;
+      const d = P.kind === "ranked" ? checkRankedSubmit(await api("POST", path, { grid })) : checkSubmit(await api("POST", path, { grid }));
+      if (d.result === "solved" && P.kind === "ranked") {
+        // Même message quel que soit le temps : rien ne renseigne sur le contrôle anti-triche.
+        finish(); $("tClock").textContent = fmtClock(d.elapsed_ms);
+        result(`Grille correcte ! Temps mesuré par le serveur : ${fmtMs(d.elapsed_ms)}.`, "ok");
+      } else if (d.result === "solved") {
         finish(); $("tClock").textContent = fmtClock(d.elapsed_ms);
         result(`Grille correcte ! Temps mesuré par le serveur : ${fmtMs(d.elapsed_ms)}.`
           + (d.under_review ? (P.kind === "tournament" ? " Ce temps est très rapide : il ne compte pas pour la victoire."
@@ -585,10 +615,17 @@ $("tSubmit").addEventListener("click", () => {
       } else if (d.result === "incorrect") {
         result(`Grille incorrecte. Essai${d.attempts_left > 1 ? "s" : ""} restant${d.attempts_left > 1 ? "s" : ""} : ${d.attempts_left}.`, "bad");
       } else {
-        finish(); result(`Grille incorrecte. Tu n'as plus d'essai pour ${P.kind === "tournament" ? "ce tournoi" : "cette manche"}.`, "bad");
+        finish(); result(`Grille incorrecte. Tu n'as plus d'essai pour ${P.kind === "tournament" ? "ce tournoi" : P.kind === "ranked" ? "cette grille" : "cette manche"}.`, "bad");
       }
     } catch (err) {
-      if (err instanceof ApiError && err.kind === "http" && err.status === 409) { finish(); result(messageFor(err), "bad"); return; }
+      if (err instanceof ApiError && err.kind === "http" && err.status === 409) {
+        finish();
+        result(P.kind === "ranked" ? "Cette grille classée est terminée (temps écoulé, abandon ou déjà validée)." : messageFor(err), "bad");
+        return;
+      }
+      if (err instanceof ApiError && err.kind === "http" && err.status === 404 && P.kind === "ranked") {
+        finish(); result("Cette grille classée n'existe plus.", "bad"); return;
+      }
       throw err;
     } finally { updateSubmit(); }
   });
@@ -596,6 +633,7 @@ $("tSubmit").addEventListener("click", () => {
 $("tPlayBack").addEventListener("click", () => {
   stopPlay();
   if (P && P.kind === "tournament") { showRoom(); return; }
+  if (P && P.kind === "ranked") { run([$("tPlayBack")], openRanked); return; }
   run([$("tPlayBack")], openLobby);
 });
 $("tPlayBoard").addEventListener("click", () => {
@@ -669,10 +707,32 @@ function checkTList(d) {
 function checkRanking(d) {
   check(Array.isArray(d.entries) && d.entries.length <= 10 && isCount(d.players) && d.me
     && maybeCount(d.me.rank) && isCount(d.me.wins));
+  d.me.solved = checkSolved(d.me.solved);
   for (const e of d.entries) {
     check(e && isCount(e.rank) && isCount(e.wins) && typeof e.deleted === "boolean" && typeof e.me === "boolean"
       && (e.deleted ? e.pseudo === null && e.avatar === null : isText(e.pseudo, 40) && isText(e.avatar, 32)));
+    e.solved = checkSolved(e.solved);
+    check((e.solved === null) === (d.me.solved === null));  // même version de serveur partout
   }
+  return d;
+}
+const RK_STATUS = ["playing", "solved", "failed", "abandoned", "expired"];
+function checkRankedGame(g) {
+  check(g && isCount(g.id) && LEVELS.includes(g.difficulty) && RK_STATUS.includes(g.status) && isCount(g.now)
+    && isCount(g.started_at) && isCount(g.ends_at) && g.ends_at > g.started_at
+    && typeof g.puzzle === "string" && /^[0-9]{81}$/.test(g.puzzle) && maybeCount(g.elapsed_ms) && isCount(g.attempts_left));
+  return g;
+}
+function checkRankedState(d) {
+  check(isCount(d.now) && (d.game === null || checkRankedGame(d.game)) && isCount(d.today)
+    && Number.isSafeInteger(d.per_day) && d.per_day >= 1 && maybeCount(d.next_slot_at));
+  return d;
+}
+function checkRankedStart(d) { checkRankedGame(d); check(typeof d.resumed === "boolean" && d.status === "playing"); return d; }
+function checkRankedSubmit(d) {
+  check(["solved", "incorrect", "failed"].includes(d.result));
+  if (d.result === "solved") check(isCount(d.elapsed_ms));
+  if (d.result === "incorrect") check(isCount(d.attempts_left));
   return d;
 }
 const normCode = raw => String(raw || "").replace(/[\s-]+/g, "").toUpperCase();
@@ -684,13 +744,14 @@ function takeIntent() {
   const raw = session.get(INTENT_KEY); session.del(INTENT_KEY);
   try {
     const it = JSON.parse(raw);
-    if (it && ["create", "join", "ranking"].includes(it.kind) && (it.code === undefined || typeof it.code === "string")) return it;
+    if (it && ["create", "join", "ranking", "ranked"].includes(it.kind) && (it.code === undefined || typeof it.code === "string")) return it;
   } catch (e) { /* ignorée */ }
   return null;
 }
 function runIntent(it, wrap = true) {
   if (it.kind === "create") { showCreate(); return undefined; }
   if (it.kind === "ranking") return wrap ? run([], openRanking) : openRanking();
+  if (it.kind === "ranked") return wrap ? run([], openRanked) : openRanked();
   if (it.code !== undefined) {
     const code = normCode(it.code);
     if (RE_TCODE.test(code)) return wrap ? run([], () => joinWith(code)) : joinWith(code);
@@ -896,6 +957,7 @@ $("tRoomLeave").addEventListener("click", () => {
 });
 $("tRoomBack").addEventListener("click", () => run([$("tRoomBack")], openLobby));
 $("tAbandon").addEventListener("click", () => {
+  if (P && P.kind === "ranked" && !P.done) { abandonRanked(P.id, $("tAbandon")); return; }
   if (!P || P.kind !== "tournament" || P.done) return;
   if (!window.confirm("Abandonner ce tournoi ? Tu ne pourras plus y revenir.")) return;
   run([$("tAbandon")], async () => {
@@ -911,21 +973,119 @@ $("tAbandon").addEventListener("click", () => {
 /* Classement global */
 async function openRanking() {
   const d = checkRanking(await api("GET", "/v1/leaderboard"));
+  const withSolved = d.me.solved !== null;
+  $("tRankTable").classList.toggle("nolv", !withSolved);
   const rows = $("tRankRows"); rows.replaceChildren();
   for (const e of d.entries) {
     const tr = el("tr", e.me ? "me" : null);
     tr.append(el("td", null, String(e.rank)), el("td", "tav", e.deleted ? "👤" : emoji(e.avatar)),
               el("td", e.deleted ? "tp tdel" : "tp", e.deleted ? "Joueur supprimé" : e.pseudo), el("td", null, String(e.wins)));
+    for (const l of LEVELS) tr.append(el("td", "lv", withSolved ? String(e.solved[l]) : ""));
     rows.append(tr);
   }
   $("tRankEmpty").hidden = d.entries.length > 0;
   $("tRankMe").textContent = d.me.rank !== null
     ? `Ta position : ${d.me.rank}ᵉ sur ${d.players} (${d.me.wins} victoire${d.me.wins > 1 ? "s" : ""}).`
     : "Tu n'as pas encore de victoire : gagne un tournoi pour entrer au classement.";
+  $("tRankMeSolved").hidden = !withSolved;
+  if (withSolved) $("tRankMeSolved").textContent = "Tes grilles résolues : " + LEVELS.map(l => `${DIFF_NAMES[l]} ${d.me.solved[l]}`).join(" · ") + ".";
   show("vRanking"); say("");
 }
 $("tRankRefresh").addEventListener("click", () => run([$("tRankRefresh")], openRanking));
 $("tRankBack").addEventListener("click", () => run([$("tRankBack")], openLobby));
+
+/* ---------- Grille classée (lot 3) ---------- */
+// Une grille notée tirée par le serveur, qui mesure le temps et valide. Une seule partie active
+// (grille classée ou tournoi), plafond sur 24 h glissantes. L'écran annonce toute partie en
+// cours (reprise) avec son heure de fin, et n'affiche jamais le plancher anti-triche.
+const RK_DURATION_MIN = { facile: 20, moyen: 30, difficile: 45, expert: 60, extreme: 90 };  // affichage ; le serveur décide
+let rkDiff = "facile", rk = null, rkOffset = 0;
+const rkLocal = ms => new Date(ms - rkOffset);  // instant du serveur → horloge de cet appareil
+async function openRanked() {
+  rk = checkRankedState(await api("GET", "/v1/ranked"));
+  rkOffset = rk.now - Date.now();
+  renderRanked(); show("vRanked"); say("");
+}
+function renderRanked() {
+  const d = rk, g = d.game;
+  $("tRkResume").hidden = !g;
+  if (g) {
+    const left = Math.max(0, Math.ceil((g.ends_at - d.now) / 60000));
+    $("tRkResumeText").textContent = `Tu as une grille classée en cours : ${DIFF_NAMES[g.difficulty]}, commencée à ${clockFmt.format(rkLocal(g.started_at))}. `
+      + `Fin à ${clockFmt.format(rkLocal(g.ends_at))} (encore ${left} min). Le chrono continue même page fermée.`;
+  }
+  const q = $("tRkQuota"), full = d.next_slot_at !== null;
+  q.textContent = `Grilles classées sur 24 h : ${d.today} / ${d.per_day}.`
+    + (full ? ` Plafond atteint : prochaine grille possible à ${clockFmt.format(rkLocal(d.next_slot_at))}${sameDay(d.next_slot_at) ? "" : " demain"}.` : "");
+  q.className = "tstate" + (full ? " full" : "");
+  $("tRkNew").hidden = !!g;
+  $("tRkStart").disabled = full;
+  for (const b of $("tRkDiff").children) b.setAttribute("aria-checked", String(b.dataset.diff === rkDiff));
+}
+function sameDay(serverMs) { return rkLocal(serverMs).toDateString() === new Date().toDateString(); }
+for (const b of $("tRkDiff").children) {
+  b.addEventListener("click", () => {
+    if (!LEVELS.includes(b.dataset.diff)) return;
+    rkDiff = b.dataset.diff;
+    for (const o of $("tRkDiff").children) o.setAttribute("aria-checked", String(o === b));
+  });
+}
+function playRanked(g, note) {
+  const key = GRID_KEY(`r${g.id}`), puzzle = [...g.puzzle].map(Number), saved = loadGrid(key, puzzle);
+  P = { kind: "ranked", gridKey: key, id: g.id, difficulty: g.difficulty, puzzle, values: saved ? saved.v : puzzle.slice(),
+        notes: saved ? saved.n : new Array(81).fill(0), startedAt: g.started_at, endsAt: g.ends_at, offset: g.now - Date.now(), done: false };
+  rkOffset = P.offset;
+  openPlay(`Grille classée · ${DIFF_NAMES[g.difficulty]} · fin à ${clockFmt.format(rkLocal(g.ends_at))}`);
+  if (note) say(note, "ok");
+}
+$("tRkStart").addEventListener("click", () => {
+  if (!LEVELS.includes(rkDiff)) return;
+  run([$("tRkStart")], async () => {
+    try {
+      const g = checkRankedStart(await api("POST", "/v1/ranked/start", { difficulty: rkDiff }));
+      playRanked(g, g.resumed
+        ? `Tu avais déjà une grille classée en cours (${DIFF_NAMES[g.difficulty]}) : la voici, son chrono a continué. Fin à ${clockFmt.format(rkLocal(g.ends_at))}.`
+        : null);
+    } catch (err) {
+      if (!(err instanceof ApiError)) throw err;
+      if (err.status === 409 && err.code === "already_in_tournament") {
+        say("Tu es dans un tournoi (salle d'attente ou partie). Termine-le ou quitte sa salle avant de jouer une grille classée.", "err"); return;
+      }
+      if (err.code === "ranked_daily_limit") {
+        await openRanked(); say(CODE_MESSAGES.ranked_daily_limit, "err"); return;
+      }
+      if (err.code === "pool_empty") { say(CODE_MESSAGES.pool_empty, "err"); return; }
+      throw err;
+    }
+  });
+});
+$("tRkResumeBtn").addEventListener("click", () => {
+  if (!rk || !rk.game) return;
+  // Relecture : la partie a pu expirer ou être finie depuis un autre appareil.
+  run([$("tRkResumeBtn")], async () => {
+    await openRanked();
+    if (rk.game) playRanked(rk.game, null);
+    else say("Cette grille classée est terminée (temps écoulé ou finie ailleurs).", "err");
+  });
+});
+function abandonRanked(id, btn) {
+  if (!window.confirm("Abandonner cette grille classée ? Elle compte quand même dans ton plafond du jour.")) return;
+  run([btn], async () => {
+    try {
+      const d = await api("POST", `/v1/ranked/${id}/abandon`);
+      check(d.result === "abandoned");
+    } catch (err) {
+      if (!(err instanceof ApiError) || err.kind !== "http" || ![404, 409].includes(err.status)) throw err;
+    }
+    if (P && P.kind === "ranked" && P.id === id) { finish(); stopPlay(); }
+    storage.del(GRID_KEY(`r${id}`));
+    await openRanked();
+    say("Grille classée abandonnée.", "ok");
+  });
+}
+$("tRkAbandon").addEventListener("click", () => { if (rk && rk.game) abandonRanked(rk.game.id, $("tRkAbandon")); });
+$("tRkBack").addEventListener("click", () => run([$("tRkBack")], openLobby));
+$("tGoRanked").addEventListener("click", () => run([$("tGoRanked")], openRanked));
 
 /* ---------- Clavier : en mode tournoi, le jeu solo ne reçoit aucune touche ---------- */
 let active = false;
@@ -974,9 +1134,9 @@ function leave() {
   // Sans partie solo : retour à l'écran d'accueil (app.js).
   if (typeof G !== "undefined" && !G && typeof showHome === "function") showHome(false);
 }
-// #tournoi : salon. Raccourcis de l'accueil (#tournoi-creer, -rejoindre, -classement) et lien
-// de tournoi (#t=CODE) : ouverts puis remplacés par #tournoi dans l'adresse.
-const HASH_INTENTS = { "#tournoi-creer": "create", "#tournoi-rejoindre": "join", "#tournoi-classement": "ranking" };
+// #tournoi : salon. Raccourcis de l'accueil (#tournoi-creer, -rejoindre, -classement, -classee)
+// et lien de tournoi (#t=CODE) : ouverts puis remplacés par #tournoi dans l'adresse.
+const HASH_INTENTS = { "#tournoi-creer": "create", "#tournoi-rejoindre": "join", "#tournoi-classement": "ranking", "#tournoi-classee": "ranked" };
 function route() {
   const h = location.hash;
   let intent = null;
