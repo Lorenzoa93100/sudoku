@@ -1420,6 +1420,7 @@ describe("page « Confidentialité »", () => {
     "Le jeu solo ne demande rien et n'envoie rien au serveur. Il garde dans ton navigateur ta partie en cours et tes réglages.",
     "Ce qu'un compte conserve",
     "Ton pseudo et ton avatar, un identifiant Discord haché (on ne garde ni ton nom Discord, ni ton adresse e-mail), la date de création et de dernière visite, tes résultats (temps, grilles résolues, victoires), et tes sessions (jeton haché, 90 jours, 5 appareils au plus). Un compte inactif depuis 12 mois est supprimé.",
+    "Si un compte est banni, son identifiant Discord haché est gardé tant que dure le bannissement, même si le compte est supprimé, pour empêcher de se réinscrire. Les sanctions sont conservées 12 mois après leur fin.",
     "Ce qui est public",
     "Ton pseudo, ton avatar, tes victoires et tes grilles résolues par niveau apparaissent dans le classement, visible sans compte.",
     "Les invités",
