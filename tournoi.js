@@ -59,6 +59,17 @@ const session = {
 };
 let token = storage.get(TOKEN_KEY);
 if (token && !RE_TOKEN.test(token)) { storage.del(TOKEN_KEY); token = null; }
+// Invité (lot 4c) : jeton limité à UN tournoi, sous sa propre clé (jamais celle du compte), effacé
+// à la fin du tournoi ou dès que le serveur ne le reconnaît plus. Jamais dans une URL ni la console.
+const GUEST_KEY = "sudoku-tournoi-invite";
+const RE_GTOKEN = /^g_[A-Za-z0-9_-]{43}$/;
+let guest = null;  // { token, id }
+try {
+  const g = JSON.parse(storage.get(GUEST_KEY) || "null");
+  if (g && typeof g.token === "string" && RE_GTOKEN.test(g.token) && Number.isSafeInteger(g.id) && g.id > 0) guest = { token: g.token, id: g.id };
+  else storage.del(GUEST_KEY);
+} catch (e) { storage.del(GUEST_KEY); }
+function setGuest(g) { guest = g; if (g) storage.set(GUEST_KEY, JSON.stringify(g)); else storage.del(GUEST_KEY); }
 
 /* ---------- Appels à l'API ---------- */
 class ApiError extends Error {
@@ -72,7 +83,9 @@ async function api(method, path, body) {
   const left = Math.ceil((cooldownUntil - Date.now()) / 1000);
   if (left > 0) throw new ApiError("rate", 429, null, left);  // pas de requête pendant l'attente
   const headers = { Accept: "application/json" };
-  if (token) headers.Authorization = `Bearer ${token}`;
+  // Le jeton d'invité ne part que vers les routes de SON tournoi.
+  const bearer = token || (guest && new RegExp(`^/v1/tournaments/${guest.id}(?:/|$)`).test(path) ? guest.token : null);
+  if (bearer) headers.Authorization = `Bearer ${bearer}`;
   const opts = { method, headers, mode: "cors", credentials: "omit", cache: "no-store", redirect: "error", referrerPolicy: "no-referrer" };
   if (body !== undefined) { headers["Content-Type"] = "application/json"; opts.body = JSON.stringify(body); }
   const ctl = new AbortController(), timer = setTimeout(() => ctl.abort(), 15000);
@@ -128,6 +141,8 @@ const CODE_MESSAGES = {
   round_closed: "Cette manche est terminée.",
   already_played: "Tu as déjà joué cette manche (un seul essai).",
   not_started: "Démarre la manche avant de valider.",
+  guest_pseudo_invalid: "Pseudo : 2 à 16 caractères, lettres (accents permis), chiffres, espace, - ou _ (pas d'espace au début, à la fin, ni deux de suite).",
+  removed_from_tournament: "Le créateur t'a retiré de ce tournoi : tu ne peux pas y revenir.",
   ranked_daily_limit: "Tu as atteint le plafond de grilles classées sur 24 h.",
   ranked_in_progress: "Tu as une grille classée en cours : termine-la ou abandonne-la avant de jouer un tournoi.",
   pool_empty: "Plus de grille classée disponible à ce niveau pour le moment. Choisis un autre niveau, ou réessaie plus tard."
@@ -217,7 +232,7 @@ function fmtClock(ms) {
 const dateFmt = new Intl.DateTimeFormat("fr-FR", { weekday: "short", day: "numeric", month: "short", hour: "2-digit", minute: "2-digit" });
 const fmtDate = ms => dateFmt.format(new Date(ms));
 
-const VIEWS = ["vLogin", "vSignup", "vLobby", "vPlay", "vBoard", "vAccount", "vCreate", "vJoin", "vRoom", "vRanking", "vRanked"];
+const VIEWS = ["vLogin", "vSignup", "vLobby", "vPlay", "vBoard", "vAccount", "vCreate", "vJoin", "vRoom", "vRanking", "vRanked", "vGuest"];
 let current = null;
 function show(view) { current = view; for (const v of VIEWS) $(v).hidden = v !== view; }
 function say(text, kind) {
@@ -232,6 +247,10 @@ async function run(buttons, fn) {
   finally { for (const b of buttons) b.disabled = false; holdDuringCooldown(); }
 }
 function handleError(err) {
+  if (err instanceof ApiError && err.kind === "http" && err.status === 401 && !token && guest) {
+    forgetGuest("Tu ne fais plus partie de ce tournoi : tu as quitté la salle, tu en as été retiré, ou tes données d'invité ont été effacées.");
+    return;
+  }
   if (err instanceof ApiError && err.kind === "http" && err.status === 401) {
     if (err.code === "invalid_code" || err.code === "invalid_ticket") { showLogin(); say(messageFor(err), "err"); return; }
     forget("Ta session a expiré. Reconnecte-toi avec Discord.");
@@ -278,6 +297,7 @@ function setMe(d) {
 function startSession(d, welcome) {
   check(RE_TOKEN.test(d.token) && isText(d.pseudo, 40) && isText(d.avatar, 32));
   token = d.token; storage.set(TOKEN_KEY, token);
+  setGuest(null);  // avec un compte, on joue en compte
   return openLobby().then(() => {
     if (welcome) say(storage.persistent ? welcome : `${welcome} Attention : ta session sera perdue en fermant la page.`, storage.persistent ? "ok" : "err");
     // Action demandée avant la connexion (créer, rejoindre par lien, classement).
@@ -316,7 +336,7 @@ function showLogin() {
   show("vLogin");
   $("tStorageWarn").hidden = storage.persistent;
 }
-$("tLoginBtn").addEventListener("click", () => run([$("tLoginBtn")], async () => {
+function discordLogin(btn) { return run([btn], async () => {
   const nonce = randomNonce();
   if (!session.set(LOGIN_KEY, JSON.stringify({ nonce, at: Date.now() }))) {
     say("Ce navigateur bloque le stockage de session : la connexion ne peut pas aboutir. Désactive le blocage pour ce site, ou utilise un autre navigateur.", "err");
@@ -327,7 +347,8 @@ $("tLoginBtn").addEventListener("click", () => run([$("tLoginBtn")], async () =>
   check(typeof d.url === "string" && d.url.length <= 2000 && d.url.startsWith(DISCORD_AUTHORIZE));
   say("Redirection vers Discord…");
   location.assign(d.url);
-}));
+}); }
+$("tLoginBtn").addEventListener("click", () => discordLogin($("tLoginBtn")));
 
 // Retour de Discord : #login=…&state=… ou #login_error=…. Lu une seule fois au chargement,
 // puis effacé de l'adresse (historique compris) avant toute autre action.
@@ -610,7 +631,7 @@ $("tSubmit").addEventListener("click", () => {
       } else if (d.result === "solved") {
         finish(); $("tClock").textContent = fmtClock(d.elapsed_ms);
         result(`Grille correcte ! Temps mesuré par le serveur : ${fmtMs(d.elapsed_ms)}.`
-          + (d.under_review ? (P.kind === "tournament" ? " Ce temps est très rapide : il ne compte pas pour la victoire."
+          + (d.under_review ? (P.kind === "tournament" ? (room && room.guest ? " Ce temps est très rapide : il est hors classement." : " Ce temps est très rapide : il ne compte pas pour la victoire.")
             : " Ce temps est très rapide : l'organisateur le vérifiera avant qu'il apparaisse au classement.") : ""), "ok");
       } else if (d.result === "incorrect") {
         result(`Grille incorrecte. Essai${d.attempts_left > 1 ? "s" : ""} restant${d.attempts_left > 1 ? "s" : ""} : ${d.attempts_left}.`, "bad");
@@ -679,9 +700,12 @@ const RE_TCODE = /^[ABCDEFGHJKMNPQRSTUVWXYZ23456789]{10}$/;
 const T_STATE_LABEL = { lobby: "Salle d'attente", running: "En cours", finished: "Terminé", expired: "Expiré", cancelled: "Fermé" };
 const P_STATUS_LABEL = { lobby: "dans la salle", playing: "en jeu", solved: "résolue", failed: "échouée", abandoned: "abandon", expired: "temps écoulé" };
 const maybeCount = v => v === null || isCount(v);
+const RE_REF = /^[0-9a-f]{16}$/;
 function checkPlayer(p) {
   check(p && typeof p.deleted === "boolean" && typeof p.me === "boolean" && typeof p.creator === "boolean"
     && P_STATUS.includes(p.status) && maybeCount(p.rank) && maybeCount(p.elapsed_ms)
+    && typeof p.guest === "boolean" && typeof p.winner === "boolean" && typeof p.ref === "string" && RE_REF.test(p.ref)
+    && !(p.guest && (p.creator || p.winner || p.deleted))  // un invité ne crée, ne gagne ni n'est supprimé
     && (p.deleted ? p.pseudo === null && p.avatar === null : isText(p.pseudo, 40) && isText(p.avatar, 32)));
 }
 function checkTournament(d) {
@@ -692,8 +716,18 @@ function checkTournament(d) {
     && Array.isArray(d.players) && d.players.length >= 1 && d.players.length <= 10
     && P_STATUS.includes(d.my_status) && typeof d.under_review === "boolean" && isCount(d.attempts_left)
     && isCount(d.absence_s) && (d.winner_counted === null || typeof d.winner_counted === "boolean")
+    && typeof d.guest === "boolean" && typeof d.guests_allowed === "boolean" && typeof d.has_guests === "boolean"
+    && (d.guest ? isCount(d.guest_retention_min) && !d.is_creator : d.guest_retention_min === undefined)
     && (d.puzzle === undefined || (typeof d.puzzle === "string" && /^[0-9]{81}$/.test(d.puzzle))));
   d.players.forEach(checkPlayer);
+  check(d.players.filter(p => p.me).length === 1 && d.players.find(p => p.me).guest === d.guest
+    && d.has_guests === d.players.some(p => p.guest));
+  return d;
+}
+function checkGuestJoin(d) {
+  check(typeof d.token === "string" && RE_GTOKEN.test(d.token) && d.tournament && typeof d.tournament === "object");
+  checkTournament(d.tournament);
+  check(d.tournament.guest === true && d.tournament.state === "lobby");
   return d;
 }
 function checkTList(d) {
@@ -790,7 +824,7 @@ $("tGoRanking").addEventListener("click", () => run([$("tGoRanking")], openRanki
 
 /* Créer */
 let createDiff = "facile";
-function showCreate() { show("vCreate"); say(""); }
+function showCreate() { show("vCreate"); say(""); $("tCreateGuests").checked = true; }
 for (const b of $("tCreateDiff").children) {
   b.addEventListener("click", () => {
     createDiff = b.dataset.diff;
@@ -802,7 +836,7 @@ $("tCreateForm").addEventListener("submit", e => {
   const n = Number($("tCreatePlayers").value);
   if (!T_DIFFS.includes(createDiff) || !Number.isInteger(n) || n < 2 || n > 10) return;
   run([$("tCreateBtn")], async () => {
-    const d = checkTournament(await api("POST", "/v1/tournaments", { difficulty: createDiff, max_players: n }));
+    const d = checkTournament(await api("POST", "/v1/tournaments", { difficulty: createDiff, max_players: n, guests_allowed: $("tCreateGuests").checked }));
     enterRoom(d);
     say("Tournoi créé ! Partage le code avec tes amis.", "ok");
   });
@@ -830,6 +864,67 @@ $("tJoinForm").addEventListener("submit", e => {
 });
 $("tJoinCancel").addEventListener("click", () => run([$("tJoinCancel")], openLobby));
 
+/* Invité (lot 4c) : rejoindre une salle sans compte, avec le code, un pseudo et un avatar de la
+   galerie. Le serveur renvoie un jeton limité à ce tournoi. Invités fermés (404 du serveur),
+   code inconnu ou tournoi sans invités : un seul message clair, la connexion reste proposée. */
+const GUEST_PSEUDO_RE = /^[A-Za-z0-9\u00C0-\u00D6\u00D8-\u00F6\u00F8-\u00FF\u0100-\u017F _-]{2,16}$/;
+function guestPseudo(raw) {
+  const p = String(raw || "").trim().normalize("NFKC");
+  return GUEST_PSEUDO_RE.test(p) && !p.includes("  ") && /[\p{L}\p{N}]/u.test(p) ? p : null;
+}
+let guestAvatar = null, guestIntent = null;
+function showGuest(code) {
+  show("vGuest"); say("");
+  if (code !== undefined) $("tGuestCode").value = code;
+  guestIntent = code;
+  buildGallery($("tGuestGallery"), guestAvatar, id => { guestAvatar = id; });
+}
+// Oublie l'invité sur cet appareil (jeton, salle) et revient au choix invité / connexion.
+function forgetGuest(msg) {
+  setGuest(null); room = null; stopPoll(); stopPlay();
+  $("tMe").hidden = true; $("tMeGuest").hidden = true;
+  showGuest(); if (msg) say(msg, "err");
+}
+const GUEST_ERRORS = {
+  pseudo_taken: "Ce pseudo est déjà pris (par un compte du jeu ou par un autre joueur de la salle). Choisis-en un autre.",
+  pseudo_forbidden: "Ce pseudo n'est pas accepté. Choisis-en un autre.",
+};
+$("tGuestForm").addEventListener("submit", e => {
+  e.preventDefault();
+  const code = normCode($("tGuestCode").value), pseudo = guestPseudo($("tGuestPseudo").value);
+  if (!RE_TCODE.test(code)) { say("Le code fait 10 caractères (lettres et chiffres, sans I, L, O, 0 ni 1).", "err"); return; }
+  if (!pseudo) { say(CODE_MESSAGES.guest_pseudo_invalid, "err"); return; }
+  if (!guestAvatar) { say("Choisis un avatar.", "err"); return; }
+  run([$("tGuestBtn")], async () => {
+    setGuest(null);  // un seul tournoi à la fois : l'ancien jeton d'invité n'est plus envoyé
+    try {
+      const d = checkGuestJoin(await api("POST", "/v1/tournaments/guest-join", { code, pseudo, avatar: guestAvatar }));
+      setGuest({ token: d.token, id: d.tournament.id });
+      $("tGuestPseudo").value = "";
+      enterRoom(d.tournament);
+      say("Bienvenue dans la salle ! Attends que le créateur lance la partie.", "ok");
+    } catch (err) {
+      if (!(err instanceof ApiError) || err.kind !== "http") throw err;
+      if (err.status === 404) {
+        say("Impossible de rejoindre en invité : code inconnu, tournoi qui n'accepte pas les invités, ou arrivées d'invités fermées pour le moment. Tu peux te connecter avec Discord.", "err");
+        return;
+      }
+      if (err.code && GUEST_ERRORS[err.code]) { say(GUEST_ERRORS[err.code], "err"); return; }
+      throw err;
+    }
+  });
+});
+$("tGuestLogin").addEventListener("click", () => {
+  keepIntent(guestIntent ? { kind: "join", code: guestIntent } : { kind: "join" });
+  discordLogin($("tGuestLogin"));
+});
+$("tLoginGuest").addEventListener("click", () => showGuest());
+function setGuestHeader(d) {
+  const mine = d.players.find(p => p.me);
+  $("tMeAv").textContent = emoji(mine.avatar); $("tMeName").textContent = mine.pseudo;
+  $("tMeGuest").hidden = false; $("tMe").hidden = false;
+}
+
 /* Salle d'attente et suivi de la partie : rafraîchissement régulier (3 s, 1 s pendant le
    compte à rebours), suspendu quand la page est cachée et relancé à son retour. */
 let room = null, roomOffset = 0, pollTimer = null;
@@ -840,6 +935,7 @@ async function openRoom(id) {
 }
 function enterRoom(d) {
   room = d; roomOffset = d.now - Date.now();
+  if (d.guest) setGuestHeader(d);
   showRoom();
 }
 function showRoom() {
@@ -865,6 +961,7 @@ async function poll() {
     if (current === "vRoom") { renderRoom(); maybePlay(); }
   } catch (err) {
     if (err instanceof ApiError && err.kind === "http" && err.status === 404) {
+      if (!token) { forgetGuest("Ce tournoi n'est plus accessible."); return; }
       room = null; stopPoll(); run([], openLobby).then(() => say("Ce tournoi n'est plus accessible.", "err")); return;
     }
     if (err instanceof ApiError && err.kind === "http" && err.status === 401) { handleError(err); return; }
@@ -892,8 +989,9 @@ function renderRoom() {
   } else if (d.state === "running") {
     text = `Partie en cours · fin à ${clockFmt.format(new Date(d.ends_at - roomOffset))}.`;
   } else if (d.state === "finished") {
-    const ranked = d.players.filter(p => p.rank !== null).length;
-    text = ranked < 2 ? "Tournoi terminé. Pas de vainqueur : il faut au moins 2 grilles résolues."
+    const ranked = d.players.filter(p => p.rank !== null && !p.guest).length;
+    text = ranked < 2 ? (d.has_guests ? "Tournoi terminé. Pas de vainqueur : il faut au moins 2 comptes ayant résolu la grille (les invités ne gagnent pas de victoire)."
+      : "Tournoi terminé. Pas de vainqueur : il faut au moins 2 grilles résolues.")
       : d.winner_counted ? "Tournoi terminé : victoire comptée au classement."
       : "Tournoi terminé. Victoire non comptée (compte trop récent, trop peu de grilles résolues, ou mêmes adversaires trop souvent).";
   } else if (d.state === "expired") text = "Salle expirée : la partie n'a pas été lancée à temps.";
@@ -905,11 +1003,32 @@ function renderRoom() {
     let status = P_STATUS_LABEL[p.status];
     if (p.status === "solved") status = p.rank !== null ? `${p.rank}ᵉ · ${fmtMs(p.elapsed_ms)}`
       : p.me && d.under_review ? `résolue en ${fmtMs(p.elapsed_ms)} (temps trop rapide, hors classement)` : "résolue";
-    const name = el("span", "tp", p.deleted ? "Joueur supprimé" : p.pseudo);
+    if (p.winner) status += " · 🏆 victoire";
+    // Pseudo isolé (bdi + unicode-bidi) ; la mention « invité » vient de l'interface, jamais du pseudo.
+    const name = el("span", "tp"), pn = document.createElement("bdi");
+    pn.className = "pn"; pn.textContent = p.deleted ? "Joueur supprimé" : p.pseudo; name.append(pn);
+    if (p.guest) name.append(el("span", "tguest", "invité"));
     if (p.creator) name.append(el("span", "tst", " · créateur"));
     if (p.me) name.append(el("span", "tst", " · toi"));
     li.append(el("span", "tav", p.deleted ? "👤" : emoji(p.avatar)), name, el("span", "tst", status));
+    if (d.state === "lobby" && d.is_creator && !p.me) {
+      const b = el("button", "pill tkick", "Retirer");
+      b.type = "button"; b.setAttribute("aria-label", `Retirer ${p.deleted ? "ce joueur" : p.pseudo} de la salle`);
+      b.addEventListener("click", () => kickPlayer(p, b));
+      li.append(b);
+    }
     ul.append(li);
+  }
+  $("tRoomGuestNote").hidden = !d.has_guests;
+  // Invité : à la fin du tournoi, son jeton est effacé de cet appareil (la page garde l'affichage).
+  const end = $("tRoomGuestEnd");
+  end.hidden = !(d.guest && isOver(d));
+  if (d.guest && isOver(d)) {
+    const min = d.guest_retention_min;
+    end.textContent = d.state === "finished"
+      ? `Tes données d'invité seront effacées dans ${min % 60 === 0 && min ? `${min / 60} h` : `${min} min`}. Crée un compte pour garder tes résultats la prochaine fois.`
+      : "Tes données d'invité ont été effacées.";
+    if (guest && guest.id === d.id) setGuest(null);
   }
   const lobby = d.state === "lobby";
   $("tRoomStart").hidden = !(lobby && d.is_creator);
@@ -959,11 +1078,26 @@ $("tRoomLeave").addEventListener("click", () => {
     const d = await api("POST", `/v1/tournaments/${room.id}/leave`);
     check(d.result === "cancelled" || d.result === "left");
     room = null; stopPoll();
+    if (!token) { setGuest(null); $("tMe").hidden = true; showGuest(); say("Tu as quitté la salle.", "ok"); return; }
     await openLobby();
     say(d.result === "cancelled" ? "Salle fermée." : "Tu as quitté la salle.", "ok");
   });
 });
-$("tRoomBack").addEventListener("click", () => run([$("tRoomBack")], openLobby));
+$("tRoomBack").addEventListener("click", () => {
+  if (!token) {  // invité : pas de salon ; retour au jeu solo (la salle reste ouverte côté serveur)
+    stopPoll(); window.history.replaceState(null, "", location.pathname + location.search); route(); return;
+  }
+  run([$("tRoomBack")], openLobby);
+});
+function kickPlayer(p, btn) {
+  if (!room || room.state !== "lobby" || !room.is_creator) return;
+  const who = p.deleted ? "ce joueur" : `« ${p.pseudo} »${p.guest ? " (invité)" : ""}`;
+  if (!window.confirm(`Retirer ${who} de la salle ? Il ne pourra pas revenir dans ce tournoi.`)) return;
+  run([btn], async () => {
+    enterRoom(checkTournament(await api("POST", `/v1/tournaments/${room.id}/kick`, { ref: p.ref })));
+    say("Joueur retiré de la salle.", "ok");
+  });
+}
 $("tAbandon").addEventListener("click", () => {
   if (P && P.kind === "ranked" && !P.done) { abandonRanked(P.id, $("tAbandon")); return; }
   if (!P || P.kind !== "tournament" || P.done) return;
@@ -1160,6 +1294,18 @@ function enter(intent = null) {
     });
     return;
   }
+  if (!token && intent && intent.kind === "join") { showGuest(intent.code !== undefined ? normCode(intent.code).slice(0, 14) : undefined); return; }
+  if (!token && guest) {
+    // Invité de retour sur la page : sa salle (le serveur dit s'il en fait encore partie).
+    show(null); say("Chargement…");
+    run([], async () => {
+      try { await openRoom(guest.id); } catch (err) {
+        if (err instanceof ApiError && err.kind === "http" && err.status === 404) { forgetGuest("Ce tournoi n'est plus accessible."); return; }
+        throw err;
+      }
+    });
+    return;
+  }
   if (!token) {
     if (intent) keepIntent(intent);  // reprise après la connexion Discord
     showLogin(); say(intent ? "Connecte-toi pour continuer." : ""); return;
@@ -1191,6 +1337,7 @@ function route() {
   if (on && !active) enter(intent);
   else if (on && intent && token) runIntent(intent);
   else if (on && intent && intent.kind === "ranking") run([], openRanking);
+  else if (on && intent && intent.kind === "join") showGuest(intent.code !== undefined ? normCode(intent.code).slice(0, 14) : undefined);
   else if (!on && active) leave();
 }
 $("tBack").addEventListener("click", e => {

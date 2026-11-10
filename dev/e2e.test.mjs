@@ -72,9 +72,9 @@ async function open(path = "", { brokenStorage = false, init } = {}) {
 const msg = page => page.locator("#tMsg");
 // « Se connecter avec Discord » : la navigation vers Discord est interceptée (jamais suivie),
 // puis on revient sur le front, page rechargée, avec le fragment que renverrait l'API.
-async function discordLogin(page, { discordId = "nouveau", error = null, tamper = null } = {}) {
+async function discordLogin(page, { discordId = "nouveau", error = null, tamper = null, button = "#tLoginBtn" } = {}) {
   const nav = page.waitForRequest(r => new URL(r.url()).host === "discord.com");
-  await page.click("#tLoginBtn");
+  await page.click(button);
   const url = new URL((await nav).url());
   let frag = fake.discordReturn(url.searchParams.get("state"), { discordId, error });
   if (tamper) frag = tamper(frag);
@@ -349,7 +349,7 @@ describe("écran d'accueil", () => {
   test("partie en cours : Rejoindre un tournoi met le solo en pause, Retour le retrouve", async () => {
     const { page, ctx, watch } = await open("", { init: withGame(savedGame) });
     await joinTournament(page);
-    await page.waitForSelector("#vLogin:not([hidden])");
+    await page.waitForSelector("#vGuest:not([hidden])");  // sans compte : invité ou connexion
     assert.equal(await page.evaluate(() => paused), true);
     await page.click("#tBack");
     await page.waitForSelector("#app:not([hidden])");
@@ -362,7 +362,7 @@ describe("mode tournoi", () => {
   test("accès depuis l'accueil et retour à l'accueil", async () => {
     const { page, ctx, watch } = await open();
     await joinTournament(page);
-    await page.waitForSelector("#vLogin:not([hidden])");
+    await page.waitForSelector("#vGuest:not([hidden])");
     assert.equal(await page.isHidden("#app"), true);
     await page.click("#tBack");
     await page.waitForSelector("#app:not([hidden])");
@@ -759,7 +759,7 @@ describe("tournois créés par les joueurs", () => {
     await A.page.click("#tCreateBtn");
     await A.page.waitForSelector("#vRoom:not([hidden])");
     const create = fake.log.find(r => r.path === "/v1/tournaments" && r.method === "POST");
-    assert.deepEqual(JSON.parse(create.body), { difficulty: "moyen", max_players: 3 });
+    assert.deepEqual(JSON.parse(create.body), { difficulty: "moyen", max_players: 3, guests_allowed: true });
     const code = await A.page.textContent("#tRoomCode");
     assert.match(code, /^[A-HJKMNP-Z2-9]{10}$/);
     assert.equal(await A.page.isDisabled("#tRoomStart"), true, "1 seul joueur");
@@ -964,15 +964,16 @@ describe("tournois créés par les joueurs", () => {
     await ctx.close();
   });
 
-  test("lien #t=CODE sans être connecté : connexion Discord puis arrivée dans la salle", async () => {
+  test("lien #t=CODE sans être connecté : choix invité ou Discord ; Discord puis arrivée dans la salle (compte)", async () => {
     const owner = fake.addUser("Owner");
     const r = fake.handle({ method: "POST", path: "/v1/tournaments", headers: { origin: FRONT_ORIGIN, authorization: `Bearer ${owner.token}`, "content-type": "application/json" },
                            body: JSON.stringify({ difficulty: "facile", max_players: 4 }) });
     const { code } = JSON.parse(r.body);
     const { page, ctx, watch } = await open(`#t=${code}`);
-    await page.waitForSelector("#vLogin:not([hidden])");
+    await page.waitForSelector("#vGuest:not([hidden])");
+    assert.equal(await page.inputValue("#tGuestCode"), code, "code prérempli depuis le lien");
     assert.equal(await page.evaluate(() => location.hash), "#tournoi");
-    await register(page, { pseudo: "Nouveau" });
+    await register(page, { pseudo: "Nouveau", button: "#tGuestLogin" });
     await page.waitForSelector("#vRoom:not([hidden])");
     assert.deepEqual(await roomPlayers(page), ["Owner", "Nouveau"]);
     await watch.check(); await ctx.close();
@@ -1192,5 +1193,217 @@ describe("grilles classées et second score (lot 3)", () => {
     await page.click("#tAccountBack");
     await msg(page).getByText("Réponse inattendue du serveur").waitFor();
     await watch.check(); await ctx.close();
+  });
+});
+
+describe("invités dans les tournois (lot 4c)", () => {
+  const as = (user, path = "#tournoi") =>
+    open(path, { init: `localStorage.setItem(${JSON.stringify(TOKEN_KEY)}, ${JSON.stringify(user.token)})` });
+  const GUEST_KEY = "sudoku-tournoi-invite";
+  const call = (user, method, path, body) => JSON.parse(fake.handle({ method, path, body: body ? JSON.stringify(body) : "",
+    headers: { origin: FRONT_ORIGIN, authorization: `Bearer ${user.token}`, ...(body ? { "content-type": "application/json" } : {}) } }).body);
+  const roomRows = page => page.$$eval("#tRoomPlayers li", lis => lis.map(li => ({
+    pseudo: li.querySelector(".pn").textContent, guest: !!li.querySelector(".tguest"), kick: !!li.querySelector(".tkick"),
+    status: li.querySelector(":scope > .tst").textContent })));
+  function lobbyOf(owner, body = { difficulty: "facile", max_players: 4 }) { return call(owner, "POST", "/v1/tournaments", body); }
+  async function joinAsGuest(page, { code, pseudo = "Zoé", avatar = "licorne" }) {
+    await page.waitForSelector("#vGuest:not([hidden])");
+    if (code !== undefined) await page.fill("#tGuestCode", code);
+    await page.fill("#tGuestPseudo", pseudo);
+    await page.click(`#tGuestGallery [data-avatar="${avatar}"]`);
+    await page.click("#tGuestBtn");
+  }
+
+  test("lien #t=CODE sans compte : rejoindre en invité, mention « invité », jeton sous sa propre clé, jamais dans l'URL ni la console", async () => {
+    const owner = fake.addUser("Owner");
+    const t = lobbyOf(owner);
+    const { page, ctx, watch } = await open(`#t=${t.code}`);
+    await joinAsGuest(page, { pseudo: "  Zoé " });
+    await page.waitForSelector("#vRoom:not([hidden])");
+    assert.deepEqual(await roomRows(page), [
+      { pseudo: "Owner", guest: false, kick: false, status: "dans la salle" },
+      { pseudo: "Zoé", guest: true, kick: false, status: "dans la salle" }]);
+    const body = JSON.parse(fake.log.find(r => r.path === "/v1/tournaments/guest-join").body);
+    assert.deepEqual(body, { code: t.code, pseudo: "Zoé", avatar: "licorne" });
+    assert.equal(await page.textContent("#tMeName"), "Zoé");
+    assert.equal(await page.isVisible("#tMeGuest"), true);
+    const stored = JSON.parse(await page.evaluate(k => localStorage.getItem(k), GUEST_KEY));
+    assert.match(stored.token, /^g_[A-Za-z0-9_-]{43}$/);
+    assert.equal(stored.id, t.id);
+    assert.equal(await page.evaluate(k => localStorage.getItem(k), TOKEN_KEY), null, "pas la clé du compte");
+    assert.ok(!(await page.evaluate(() => location.href)).includes(stored.token));
+    assert.ok(!watch.console.some(m => m.includes(stored.token)), "jeton absent de la console");
+    // Pseudo isolé (bidi) par l'interface ; « invité » n'est pas dans le pseudo.
+    assert.equal(await page.$eval("#tRoomPlayers li:nth-child(2) .pn", e => getComputedStyle(e).unicodeBidi), "isolate");
+    assert.equal(await page.$eval("#tRoomPlayers li:nth-child(2) .pn", e => e.tagName), "BDI");
+    // Le créateur voit l'invité avec la mention, et le bouton Retirer.
+    const O = await as(owner);
+    await O.page.click('#tTournaments button:has-text("Ouvrir")');
+    await O.page.waitForSelector("#vRoom:not([hidden])");
+    assert.deepEqual((await roomRows(O.page)).map(r => [r.pseudo, r.guest, r.kick]), [["Owner", false, false], ["Zoé", true, true]]);
+    await O.ctx.close();
+    await watch.check(); await ctx.close();
+  });
+
+  test("le jeton d'invité ne part que vers son tournoi (classement public sans jeton)", async () => {
+    const owner = fake.addUser("Owner");
+    const t = lobbyOf(owner);
+    const { page, ctx } = await open(`#t=${t.code}`);
+    let auth = [];
+    page.on("request", r => { const h = r.headers().authorization; if (h) auth.push([new URL(r.url()).pathname, h.slice(0, 9)]); });
+    await joinAsGuest(page, {});
+    await page.waitForSelector("#vRoom:not([hidden])");
+    await page.waitForTimeout(3500);  // un rafraîchissement de la salle
+    await page.click("#tRoomBack");
+    await page.waitForSelector("#app:not([hidden])");
+    await page.evaluate(() => { location.hash = "#tournoi-classement"; });
+    await page.waitForSelector("#vRanking:not([hidden])");
+    assert.ok(auth.length > 0 && auth.every(([p, h]) => p === `/v1/tournaments/${t.id}` && h === "Bearer g_"), JSON.stringify(auth));
+    assert.equal(fake.publicLeaderboardCalls, 1);
+    await ctx.close();
+  });
+
+  test("retour sur la page : l'invité retrouve sa salle ; quitter la salle efface le jeton", async () => {
+    const owner = fake.addUser("Owner");
+    const t = lobbyOf(owner);
+    const { page, ctx } = await open(`#t=${t.code}`);
+    page.on("dialog", d => d.accept());
+    await joinAsGuest(page, {});
+    await page.waitForSelector("#vRoom:not([hidden])");
+    await page.goto(servers.url + "#tournoi");
+    await page.waitForSelector("#vRoom:not([hidden])");
+    assert.equal(await page.textContent("#tRoomName"), "Renard rusé");
+    await page.click("#tRoomLeave");
+    await page.waitForSelector("#vGuest:not([hidden])");
+    await msg(page).getByText("Tu as quitté la salle.").waitFor();
+    assert.equal(await page.evaluate(k => localStorage.getItem(k), GUEST_KEY), null);
+    await ctx.close();
+  });
+
+  test("invités fermés sur le serveur (404) : message clair, pas de plantage, connexion proposée", async () => {
+    fake.guestsEnabled = false;
+    const owner = fake.addUser("Owner");
+    const t = lobbyOf(owner);
+    const { page, ctx, watch } = await open(`#t=${t.code}`);
+    await joinAsGuest(page, {});
+    await msg(page).getByText("Impossible de rejoindre en invité").waitFor();
+    assert.match(await page.textContent("#tMsg"), /arrivées d'invités fermées pour le moment\. Tu peux te connecter avec Discord\./);
+    assert.equal(await page.isVisible("#vGuest"), true);
+    assert.equal(await page.isVisible("#tGuestLogin"), true);
+    assert.equal(await page.evaluate(k => localStorage.getItem(k), GUEST_KEY), null);
+    await watch.check(); await ctx.close();
+  });
+
+  test("contrôles locaux et refus du serveur : pseudo invalide, pris, refusé, tournoi sans invités, retiré", async () => {
+    const owner = fake.addUser("Owner");
+    const t = lobbyOf(owner);
+    const { page, ctx } = await open("#tournoi-rejoindre");
+    const before = () => fake.log.filter(r => r.path === "/v1/tournaments/guest-join").length;
+    for (const bad of ["a", "Bob\u202eevil", "Bo\u200bb", "\u0410lice", "Bob  Lee"]) {
+      await joinAsGuest(page, { code: t.code, pseudo: bad });
+      await msg(page).getByText("Pseudo : 2 à 16 caractères").waitFor();
+    }
+    assert.equal(before(), 0, "rien n'est envoyé");
+    await joinAsGuest(page, { pseudo: "owner" });
+    await msg(page).getByText("Ce pseudo est déjà pris").waitFor();
+    await joinAsGuest(page, { pseudo: "Invité" });
+    await msg(page).getByText("Ce pseudo n'est pas accepté").waitFor();
+    const closed = lobbyOf(fake.addUser("Bob"), { difficulty: "facile", max_players: 4, guests_allowed: false });
+    await joinAsGuest(page, { code: closed.code, pseudo: "Max" });
+    await msg(page).getByText("tournoi qui n'accepte pas les invités").waitFor();
+    // Retrait : jeton refusé ensuite, l'invité revient au choix invité / connexion.
+    await joinAsGuest(page, { code: t.code, pseudo: "Max" });
+    await page.waitForSelector("#vRoom:not([hidden])");
+    const ref = call(owner, "GET", `/v1/tournaments/${t.id}`).players.find(p => p.guest).ref;
+    call(owner, "POST", `/v1/tournaments/${t.id}/kick`, { ref });
+    await page.waitForSelector("#vGuest:not([hidden])", { timeout: 8000 });
+    await msg(page).getByText("Tu ne fais plus partie de ce tournoi").waitFor();
+    assert.equal(await page.evaluate(k => localStorage.getItem(k), GUEST_KEY), null);
+    await joinAsGuest(page, { code: t.code, pseudo: "Max" });
+    await msg(page).getByText("Le créateur t'a retiré de ce tournoi").waitFor();
+    await ctx.close();
+  });
+
+  test("créateur : case « Accepter les invités », bouton Retirer (confirmation), pas après le départ", async () => {
+    const alice = fake.addUser("Alice", "dragon");
+    const { page, ctx, watch } = await as(alice);
+    page.on("dialog", d => d.accept());
+    await page.click("#tGoCreate");
+    assert.equal(await page.isChecked("#tCreateGuests"), true);
+    await page.click("#tCreateGuests");
+    await page.click("#tCreateBtn");
+    await page.waitForSelector("#vRoom:not([hidden])");
+    assert.equal(fake.tournament(1).guests_allowed, false);
+    await page.click("#tRoomLeave");  // ferme la salle
+    await page.waitForSelector("#vLobby:not([hidden])");
+    await page.click("#tGoCreate");
+    assert.equal(await page.isChecked("#tCreateGuests"), true, "cochée de nouveau par défaut");
+    await page.click("#tCreateBtn");
+    await page.waitForSelector("#vRoom:not([hidden])");
+    const t = fake.tournament(2);
+    const bob = fake.addUser("Bob");
+    call(bob, "POST", "/v1/tournaments/join", { code: t.code });
+    JSON.parse(fake.handle({ method: "POST", path: "/v1/tournaments/guest-join", headers: { origin: FRONT_ORIGIN, "content-type": "application/json" },
+      body: JSON.stringify({ code: t.code, pseudo: "Zoé", avatar: "chat" }) }).body);
+    await page.waitForFunction(() => document.querySelectorAll("#tRoomPlayers .tkick").length === 2, null, { timeout: 8000 });
+    await page.click('#tRoomPlayers li:has-text("Zoé") .tkick');
+    await page.waitForFunction(() => document.querySelectorAll("#tRoomPlayers li").length === 2);
+    await msg(page).getByText("Joueur retiré de la salle.").waitFor();
+    assert.equal(call(bob, "POST", "/v1/tournaments/join", { code: t.code }).players.length, 2);
+    await page.click("#tRoomStart");
+    await page.waitForFunction(() => document.querySelectorAll("#tRoomPlayers .tkick").length === 0);
+    await watch.check(); await ctx.close();
+  });
+
+  test("fin de tournoi : invité classé avec la mention, trophée au premier compte, données effacées dans 1 h, jeton effacé", async () => {
+    fake.countdownMs = 0;
+    const alice = fake.addUser("Alice"), bob = fake.addUser("Bob");
+    const t = lobbyOf(alice);
+    call(bob, "POST", "/v1/tournaments/join", { code: t.code });
+    const { page, ctx, watch } = await open(`#t=${t.code}`);
+    await joinAsGuest(page, { pseudo: "Zoé" });
+    await page.waitForSelector("#vRoom:not([hidden])");
+    call(alice, "POST", `/v1/tournaments/${t.id}/start`);
+    await page.waitForSelector("#vPlay:not([hidden])", { timeout: 8000 });
+    await fillGrid(page, SOLUTION);
+    await page.click("#tSubmit");
+    await page.locator("#tResult").getByText("Grille correcte").waitFor();
+    call(alice, "POST", `/v1/tournaments/${t.id}/submit`, { grid: SOLUTION });
+    call(bob, "POST", `/v1/tournaments/${t.id}/submit`, { grid: SOLUTION });
+    await page.click("#tPlayBack");
+    await page.waitForSelector("#vRoom:not([hidden])");
+    await page.locator("#tRoomGuestEnd").getByText("Tes données d'invité seront effacées dans 1 h.").waitFor();
+    const rows = await roomRows(page);
+    assert.deepEqual(rows.map(r => [r.pseudo, r.guest]), [["Zoé", true], ["Alice", false], ["Bob", false]]);
+    assert.match(rows[1].status, /🏆 victoire/);
+    assert.doesNotMatch(rows[0].status, /🏆/);
+    assert.equal(await page.isVisible("#tRoomGuestNote"), true);
+    assert.equal(await page.textContent("#tRoomGuestNote"), "Les invités ne gagnent pas de victoire.");
+    assert.equal(await page.evaluate(k => localStorage.getItem(k), GUEST_KEY), null, "jeton effacé à la fin");
+    await watch.check(); await ctx.close();
+  });
+
+  test("compte connecté qui ouvre un lien #t=CODE : rejoint en compte, sans écran invité", async () => {
+    const owner = fake.addUser("Owner"), alice = fake.addUser("Alice");
+    const t = lobbyOf(owner);
+    const { page, ctx } = await as(alice, `#t=${t.code}`);
+    await page.waitForSelector("#vRoom:not([hidden])");
+    assert.deepEqual((await roomRows(page)).map(r => [r.pseudo, r.guest]), [["Owner", false], ["Alice", false]]);
+    assert.equal(fake.log.filter(r => r.path === "/v1/tournaments/guest-join").length, 0);
+    await ctx.close();
+  });
+
+  test("réponse d'arrivée incohérente (pas invité, jeton mal formé) : refusée, rien n'est stocké", async () => {
+    const owner = fake.addUser("Owner");
+    const t = lobbyOf(owner);
+    const view = call(owner, "GET", `/v1/tournaments/${t.id}`);
+    for (const body of [{ token: "g_" + "a".repeat(43), tournament: view }, { token: "abc", tournament: { ...view, guest: true } }]) {
+      const { page, ctx } = await open(`#t=${t.code}`);
+      fake.queue({ status: 201, body });
+      await joinAsGuest(page, {});
+      await msg(page).getByText("Réponse inattendue du serveur").waitFor();
+      assert.equal(await page.evaluate(k => localStorage.getItem(k), GUEST_KEY), null);
+      await ctx.close();
+    }
   });
 });

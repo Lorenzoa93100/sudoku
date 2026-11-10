@@ -452,3 +452,15 @@ select.tinput{font-size:16px;padding:10px 12px}
 .tpublic{margin:0 0 12px;font-weight:500}
 #tRankLogin{margin-top:10px}
 #tRankEmpty{margin:10px 0}
+
+/* ---------- Invités (lot 4c) ---------- */
+/* Pseudos isolés : un caractère de direction ne peut pas retourner le texte qui suit. */
+.pn,.tp,.tpseudo,#tMeName,#tProfName,#tAccName{unicode-bidi:isolate}
+.tguest{display:inline-block;margin-left:6px;padding:0 6px;border-radius:999px;background:var(--peer);color:var(--muted);font-size:12px;font-weight:600;vertical-align:1px}
+.tme .tguest{margin-left:2px}
+.tpseudoin{text-transform:none;letter-spacing:.02em;font-family:inherit}
+.tcheck{display:flex;gap:8px;align-items:flex-start;font-size:14.5px;margin:14px 2px 4px;line-height:1.4}
+.tcheck input{margin-top:3px}
+.tplayers .tkick{padding:4px 10px;font-size:13px}
+.tguestor{margin-top:18px}
+#tRoomGuestEnd{margin-top:8px}

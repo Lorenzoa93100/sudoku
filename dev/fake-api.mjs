@@ -43,6 +43,8 @@ export function createFakeApi({ clock = () => Date.now(), maxWrong = 5 } = {}) {
   const tournaments = new Map();    // id -> tournoi (voir route POST /v1/tournaments)
   const rankedGames = new Map();    // id -> grille classée (voir rankedApi)
   const solvedCounts = new Map();   // userId -> { niveau: grilles résolues } (second score)
+  const guestTokens = new Map();    // jeton g_… -> { tid, key } (invité d'un seul tournoi, lot 4b)
+  let nextGuest = 1;
   const queued = [];                // réponses forcées pour les prochaines requêtes /v1 (tests)
   const log = [];                   // requêtes reçues : { method, path, origin, body }
   let nextUser = 1, nextRound = 1, nextAttempt = 1;
@@ -72,6 +74,10 @@ export function createFakeApi({ clock = () => Date.now(), maxWrong = 5 } = {}) {
     // Grilles classées (lot 3) : plafond sur 24 h, niveaux dont la réserve est vide, et
     // legacy = serveur d'avant le lot 3 (pas de champ solved, pas de route /v1/ranked).
     rankedPerDay: 10,
+    // Invités (lot 4b) : ouverts côté faux serveur (GUESTS_ENABLED=1) ; false = 404 comme la VM.
+    guestsEnabled: true,
+    guestRetentionMin: 60,
+    guestToken(key) { return [...guestTokens.entries()].find(([, g]) => g.key === key)?.[0]; },
     poolEmpty: new Set(),
     legacy: false,
     rankedGame(id) { return rankedGames.get(id); },
@@ -186,6 +192,16 @@ export function createFakeApi({ clock = () => Date.now(), maxWrong = 5 } = {}) {
       return json(201, { token: t, pseudo: body.pseudo, avatar: body.avatar });
     }
     if (req.path.startsWith("/v1/probe/")) return probe(req, route, body);
+    if (route === "POST /v1/tournaments/guest-join") return guestJoin(body, clock(), strict);
+    // Jeton d'invité : seulement les routes de son tournoi ; partout ailleurs, 401.
+    const gm = /^Bearer (g_[A-Za-z0-9_-]{43})$/.exec(req.headers.authorization || "");
+    if (gm) {
+      const g = guestTokens.get(gm[1]);
+      const tm = /^\/v1\/tournaments\/(\d+)(?:\/|$)/.exec(req.path);
+      if (!g || !tm) return json(401, { error: "unauthorized" }, { "www-authenticate": "Bearer" });
+      if (Number(tm[1]) !== g.tid) return json(404, { error: "not_found" });
+      return tournamentApi(req, body, g.key, clock(), strict) || json(404, { error: "not_found" });
+    }
     // Classement global public (lot 4a) : sans en-tête Authorization, top 10 sans « ma position ».
     if (route === "GET /v1/leaderboard" && req.headers.authorization === undefined) return tournamentApi(req, body, null, clock(), strict);
     const [scheme, t] = (req.headers.authorization || "").split(" ");
@@ -282,7 +298,10 @@ export function createFakeApi({ clock = () => Date.now(), maxWrong = 5 } = {}) {
       if (now >= t.ends_at) for (const p of t.players.values()) if (p.status === "playing") p.status = "expired";
       if (![...t.players.values()].some(p => p.status === "playing")) {
         t.state = "finished";
-        t.winner_counted = [...t.players.values()].filter(p => p.status === "solved").length >= 2;
+        // Victoire : premier COMPTE, et au moins 2 comptes ayant résolu (invités ignorés).
+        const acc = [...t.players.entries()].filter(([, p]) => p.status === "solved" && !p.guest).sort((a, b) => a[1].elapsed - b[1].elapsed);
+        t.winner = acc.length >= 2 ? acc[0][0] : null;
+        t.winner_counted = t.winner !== null;
       }
     }
   }
@@ -291,16 +310,19 @@ export function createFakeApi({ clock = () => Date.now(), maxWrong = 5 } = {}) {
     const solved = entries.filter(([, p]) => p.status === "solved").sort((a, b) => a[1].elapsed - b[1].elapsed);
     const order = [...solved, ...entries.filter(([, p]) => p.status !== "solved").sort((a, b) => a[1].joined_at - b[1].joined_at)];
     const players = order.map(([id, p]) => {
-      const u = users.get(id), k = solved.findIndex(([x]) => x === id);
-      return { pseudo: u.pseudo, avatar: u.avatar, deleted: u.deleted, status: p.status, me: id === uid,
-               creator: id === t.creator, rank: k >= 0 ? k + 1 : null, elapsed_ms: k >= 0 ? p.elapsed : null };
+      const u = p.guest ? { pseudo: p.pseudo, avatar: p.avatar, deleted: false } : users.get(id), k = solved.findIndex(([x]) => x === id);
+      return { ref: refOf(t.id, id), pseudo: u.pseudo, avatar: u.avatar, deleted: u.deleted, guest: !!p.guest, status: p.status, me: id === uid,
+               creator: id === t.creator, rank: k >= 0 ? k + 1 : null, elapsed_ms: k >= 0 ? p.elapsed : null,
+               winner: t.state === "finished" && t.winner === id };
     });
     const mine = t.players.get(uid);
     const out = { id: t.id, name: t.name, difficulty: t.difficulty, max_players: t.max_players, state: t.state, now,
       is_creator: t.creator === uid, code: t.state === "lobby" ? t.code : null,
       lobby_expires_at: t.state === "lobby" ? t.created_at + 15 * 60_000 : null, starts_at: t.starts_at, ends_at: t.ends_at,
       players, my_status: mine.status, under_review: false, attempts_left: maxWrong - mine.wrong, absence_s: 300,
-      winner_counted: t.state === "finished" ? t.winner_counted : null };
+      winner_counted: t.state === "finished" ? t.winner_counted : null,
+      guest: typeof uid === "string", guests_allowed: t.guests_allowed, has_guests: [...t.players.values()].some(p => p.guest) };
+    if (typeof uid === "string") out.guest_retention_min = fake.guestRetentionMin;
     if ((t.state === "running" || t.state === "finished") && now >= t.starts_at) out.puzzle = t.puzzle;
     return out;
   }
@@ -316,8 +338,7 @@ export function createFakeApi({ clock = () => Date.now(), maxWrong = 5 } = {}) {
       const wins = new Map();
       for (const t of tournaments.values()) {
         if (t.state !== "finished" || !t.winner_counted) continue;
-        const w = [...t.players.entries()].filter(([, p]) => p.status === "solved").sort((a, b) => a[1].elapsed - b[1].elapsed)[0][0];
-        wins.set(w, (wins.get(w) || 0) + 1);
+        wins.set(t.winner, (wins.get(t.winner) || 0) + 1);
       }
       const order = [...wins.entries()].sort((a, b) => b[1] - a[1]);
       const entries = order.slice(0, 10).map(([id, n], k) => { const u = users.get(id);
@@ -327,15 +348,17 @@ export function createFakeApi({ clock = () => Date.now(), maxWrong = 5 } = {}) {
       return json(200, { entries, players: order.length, me: withSolved({ rank: k >= 0 ? k + 1 : null, wins: wins.get(uid) || 0 }, uid) });
     }
     if (route === "POST /v1/tournaments") {
-      if (!strict(["difficulty", "max_players"], ["difficulty", "max_players"]) || !["facile", "moyen", "difficile"].includes(body.difficulty)
-        || !Number.isInteger(body.max_players) || body.max_players < 2 || body.max_players > 10) return json(422, { error: "invalid_request" });
+      if (!strict(["difficulty", "max_players", "guests_allowed"], ["difficulty", "max_players"]) || !["facile", "moyen", "difficile"].includes(body.difficulty)
+        || !Number.isInteger(body.max_players) || body.max_players < 2 || body.max_players > 10
+        || (body.guests_allowed !== undefined && typeof body.guests_allowed !== "boolean")) return json(422, { error: "invalid_request" });
       if ([...tournaments.values()].some(t => ["lobby", "running"].includes(t.state) && ["lobby", "playing"].includes((t.players.get(uid) || {}).status)))
         return json(409, { error: "already_in_tournament" });
       if (rankedActive(uid, now)) return json(409, { error: "ranked_in_progress" });
       const id = nextTournament++;
       const code = [...crypto.getRandomValues(new Uint8Array(10))].map(x => CODE_ABC[x % CODE_ABC.length]).join("");
       const t = { id, code, name: "Renard rusé", difficulty: body.difficulty, max_players: body.max_players, creator: uid,
-                  state: "lobby", puzzle: PUZZLE, created_at: now, starts_at: null, ends_at: null, players: new Map(), winner_counted: null };
+                  state: "lobby", puzzle: PUZZLE, created_at: now, starts_at: null, ends_at: null, players: new Map(), winner_counted: null,
+                  guests_allowed: body.guests_allowed !== false, kicked: new Set(), winner: null };
       tournaments.set(id, t); fake.joinTournament(id, uid);
       return json(201, tView(t, uid, now));
     }
@@ -346,6 +369,7 @@ export function createFakeApi({ clock = () => Date.now(), maxWrong = 5 } = {}) {
       tRefresh(t, now);
       if (!t.players.has(uid)) {
         if (t.state !== "lobby") return json(409, { error: "tournament_closed" });
+        if (t.kicked.has(uid)) return json(409, { error: "removed_from_tournament" });
         if (t.players.size >= t.max_players) return json(409, { error: "tournament_full" });
         if (rankedActive(uid, now)) return json(409, { error: "ranked_in_progress" });
         fake.joinTournament(t.id, uid);
@@ -374,10 +398,21 @@ export function createFakeApi({ clock = () => Date.now(), maxWrong = 5 } = {}) {
     if (route === "POST /v1/tournaments/:id/leave") {
       if (t.state === "lobby") {
         if (t.creator === uid) { t.state = "cancelled"; return json(200, { result: "cancelled" }); }
-        t.players.delete(uid); return json(200, { result: "left" });
+        t.players.delete(uid); dropGuestToken(uid); return json(200, { result: "left" });
       }
       if (t.state === "running" && me.status === "playing") { me.status = "abandoned"; tRefresh(t, now); return json(200, { result: "abandoned" }); }
       return json(409, { error: "already_finished" });
+    }
+    if (route === "POST /v1/tournaments/:id/kick") {
+      if (!strict(["ref"], ["ref"]) || typeof body.ref !== "string" || !/^[0-9a-f]{16}$/.test(body.ref)) return json(422, { error: "invalid_request" });
+      if (t.creator !== uid) return json(403, { error: "not_creator" });
+      if (t.state !== "lobby") return json(409, { error: "tournament_closed" });
+      const target = [...t.players.keys()].find(k => refOf(t.id, k) === body.ref);
+      if (target === undefined || target === uid) return json(404, { error: "not_found" });
+      const p = t.players.get(target);
+      t.kicked.add(p.guest ? `pseudo:${fold(p.pseudo)}` : target);
+      t.players.delete(target); dropGuestToken(target);
+      return json(200, tView(t, uid, now));
     }
     if (route === "POST /v1/tournaments/:id/submit") {
       if (!strict(["grid"], ["grid"]) || typeof body.grid !== "string" || !/^[1-9]{81}$/.test(body.grid)) return json(422, { error: "invalid_request" });
@@ -385,7 +420,7 @@ export function createFakeApi({ clock = () => Date.now(), maxWrong = 5 } = {}) {
       if (me.status !== "playing") return json(409, { error: "already_finished" });
       if (isValidCompletion(t.puzzle, body.grid)) {
         Object.assign(me, { status: "solved", elapsed: now - t.starts_at, finished_at: now }); tRefresh(t, now);
-        solvedOf(uid)[t.difficulty]++;
+        if (!me.guest) solvedOf(uid)[t.difficulty]++;  // un invité n'enregistre aucun score
         return json(200, { result: "solved", elapsed_ms: me.elapsed, under_review: false });
       }
       me.wrong++;
@@ -394,6 +429,33 @@ export function createFakeApi({ clock = () => Date.now(), maxWrong = 5 } = {}) {
     }
     return json(404, { error: "not_found" });
   }
+  // --- Invités : même comportement visible que l'API du lot 4b (pseudo contrôlé, jeton limité).
+  const refOf = (tid, key) => Buffer.from(`${tid}:${key}`).toString("hex").padStart(16, "0").slice(-16);
+  function dropGuestToken(key) { for (const [k, g] of guestTokens) if (g.key === key) guestTokens.delete(k); }
+  const GUEST_RE = /^[A-Za-z0-9\u00C0-\u00D6\u00D8-\u00F6\u00F8-\u00FF\u0100-\u017F _-]{2,16}$/;
+  const fold = p => p.normalize("NFKD").replace(/[\u0300-\u036f]/g, "").toLowerCase();
+  function guestJoin(body, now, strict) {
+    if (!fake.guestsEnabled) return json(404, { error: "not_found" });
+    if (!strict(["code", "pseudo", "avatar"], ["code", "pseudo", "avatar"]) || typeof body.code !== "string"
+      || typeof body.pseudo !== "string" || !AVATARS.includes(body.avatar)) return json(422, { error: "invalid_request" });
+    const pseudo = body.pseudo.normalize("NFKC");
+    if (!GUEST_RE.test(pseudo) || pseudo !== pseudo.trim() || pseudo.includes("  ")) return json(422, { error: "guest_pseudo_invalid" });
+    if (/invit|guest|admin/i.test(fold(pseudo))) return json(422, { error: "pseudo_forbidden" });
+    const t = [...tournaments.values()].find(x => x.code === body.code.replace(/[\s-]/g, "").toUpperCase());
+    if (!t || !t.guests_allowed) return json(404, { error: "not_found" });
+    tRefresh(t, now);
+    if (t.state !== "lobby") return json(409, { error: "tournament_closed" });
+    if (t.kicked.has(`pseudo:${fold(pseudo)}`)) return json(409, { error: "removed_from_tournament" });
+    if (t.players.size >= t.max_players) return json(409, { error: "tournament_full" });
+    const taken = [...users.values()].some(u => u.pseudo && fold(u.pseudo) === fold(pseudo))
+      || [...t.players.values()].some(p => p.guest && fold(p.pseudo) === fold(pseudo));
+    if (taken) return json(409, { error: "pseudo_taken" });
+    const key = `g${nextGuest++}`, token = "g_" + randomToken(43);
+    t.players.set(key, { status: "lobby", joined_at: now, elapsed: null, finished_at: null, wrong: 0, guest: true, pseudo, avatar: body.avatar });
+    guestTokens.set(token, { tid: t.id, key });
+    return json(201, { token, tournament: tView(t, key, now) });
+  }
+
   // --- Grilles classées : même comportement visible que l'API (lot 3).
   const RK_MIN = { facile: 20, moyen: 30, difficile: 45, expert: 60, extreme: 90 };
   let nextRanked = 1;

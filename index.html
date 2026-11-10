@@ -58,7 +58,7 @@
   <div class="top">
     <a class="iconbtn" href="#" id="tBack" aria-label="Retour au jeu solo"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M15 6l-6 6 6 6"/></svg></a>
     <div class="title"><h1 class="level">Tournoi</h1></div>
-    <div class="tme" id="tMe" hidden><span class="tav" id="tMeAv"></span><span id="tMeName"></span></div>
+    <div class="tme" id="tMe" hidden><span class="tav" id="tMeAv"></span><span class="pn" id="tMeName"></span><span class="tguest" id="tMeGuest" hidden>invité</span></div>
   </div>
   <p class="tmsg" id="tMsg" role="status" aria-live="polite" hidden></p>
 
@@ -67,6 +67,24 @@
     <p class="sub">Le tournoi utilise ton compte Discord pour te reconnaître, sur tous tes appareils. Seul ton identifiant Discord est lu : ni ton nom, ni ton e-mail, ni tes messages. Ton compte Discord doit avoir au moins 30 jours.</p>
     <p class="twarn" id="tStorageWarn" hidden>Ce navigateur ne peut pas garder ta session (navigation privée ?) : en fermant la page, tu devras te reconnecter.</p>
     <button class="pill primary tsubmit" type="button" id="tLoginBtn">Se connecter avec Discord</button>
+    <button class="linkbtn" type="button" id="tLoginGuest">Pas de compte ? Rejoindre un tournoi en invité</button>
+  </div>
+
+  <div class="tview" id="vGuest" hidden>
+    <h2 class="th2">Rejoindre un tournoi</h2>
+    <p class="sub">Sans compte, en invité : tu joues le tournoi avec les autres, mais rien n'est enregistré pour toi (ni victoire, ni classement). Tes données d'invité sont effacées une heure après la fin du tournoi.</p>
+    <form id="tGuestForm" novalidate>
+      <label class="tlabel" for="tGuestCode">Code du tournoi</label>
+      <input class="codein tinput" id="tGuestCode" maxlength="14" autocomplete="off" autocapitalize="characters" spellcheck="false">
+      <label class="tlabel" for="tGuestPseudo">Pseudo</label>
+      <input class="codein tinput tpseudoin" id="tGuestPseudo" maxlength="16" autocomplete="off" autocapitalize="off" spellcheck="false">
+      <p class="thelp">2 à 16 caractères : lettres (accents permis), chiffres, espace, - ou _. La mention « invité » est ajoutée automatiquement à côté de ton pseudo.</p>
+      <p class="tlabel" id="tGuestAvLabel">Avatar</p>
+      <div class="tgallery" id="tGuestGallery" role="radiogroup" aria-labelledby="tGuestAvLabel"></div>
+      <button class="pill primary tsubmit" type="submit" id="tGuestBtn">Rejoindre en invité</button>
+    </form>
+    <p class="sub tguestor">Tu as un compte Discord, ou tu veux garder tes victoires ?</p>
+    <button class="pill tsubmit" type="button" id="tGuestLogin">Se connecter avec Discord</button>
   </div>
 
   <div class="tview" id="vSignup" hidden>
@@ -149,6 +167,7 @@
         <option value="5">5</option><option value="6">6</option><option value="7">7</option>
         <option value="8">8</option><option value="9">9</option><option value="10">10</option>
       </select>
+      <label class="tcheck"><input type="checkbox" id="tCreateGuests" checked> Accepter les invités (joueurs sans compte, qui ne gagnent pas de victoire)</label>
       <p class="twarn tabsence">Pendant la partie, garde la page ouverte : 5 minutes sans nouvelles de ton appareil (page fermée, écran verrouillé, application en arrière-plan) comptent comme un abandon.</p>
       <button class="pill primary tsubmit" type="submit" id="tCreateBtn">Créer le tournoi</button>
       <button class="linkbtn" type="button" id="tCreateCancel">Annuler</button>
@@ -175,6 +194,8 @@
     </div>
     <p class="tstate" id="tRoomState"></p>
     <ul class="tplayers" id="tRoomPlayers"></ul>
+    <p class="sub" id="tRoomGuestNote" hidden>Les invités ne gagnent pas de victoire.</p>
+    <p class="tstate" id="tRoomGuestEnd" hidden></p>
     <p class="twarn tabsence" id="tRoomWarn">Pendant la partie, garde la page ouverte : 5 minutes sans nouvelles de ton appareil (page fermée, écran verrouillé, application en arrière-plan) comptent comme un abandon.</p>
     <div class="tactions">
       <button class="pill primary" type="button" id="tRoomStart" hidden>Lancer la partie</button>
