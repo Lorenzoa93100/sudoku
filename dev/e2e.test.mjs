@@ -1407,3 +1407,82 @@ describe("invités dans les tournois (lot 4c)", () => {
     }
   });
 });
+
+describe("page « Confidentialité »", () => {
+  // Texte fourni, à reproduire tel quel (titre, puis intertitre et paragraphe par section).
+  const EXPECTED = [
+    "Confidentialité",
+    "Qui gère ce site ?",
+    "Un projet personnel sans but commercial, géré par Lorenzoa93100. Contact : ouvre une « issue » sur le dépôt GitHub du jeu (Lorenzoa93100/sudoku), sans y mettre de donnée personnelle.",
+    "Âge minimum",
+    "Le mode tournoi passe par Discord, qui impose un âge minimum de 13 ans. Le jeu solo est ouvert à tous.",
+    "Jouer sans compte",
+    "Le jeu solo ne demande rien et n'envoie rien au serveur. Il garde dans ton navigateur ta partie en cours et tes réglages.",
+    "Ce qu'un compte conserve",
+    "Ton pseudo et ton avatar, un identifiant Discord haché (on ne garde ni ton nom Discord, ni ton adresse e-mail), la date de création et de dernière visite, tes résultats (temps, grilles résolues, victoires), et tes sessions (jeton haché, 90 jours, 5 appareils au plus). Un compte inactif depuis 12 mois est supprimé.",
+    "Ce qui est public",
+    "Ton pseudo, ton avatar, tes victoires et tes grilles résolues par niveau apparaissent dans le classement, visible sans compte.",
+    "Les invités",
+    "Un invité n'enregistre rien dans les classements. Son pseudo, son avatar et son jeton sont effacés une heure après la fin du tournoi.",
+    "Connexion avec Discord",
+    "Elle ne demande que le nom d'utilisateur, l'avatar et la bannière. Discord reçoit les informations de la connexion, selon sa propre politique de confidentialité.",
+    "Adresses IP",
+    "Elles ne sont jamais stockées dans la base de données. Les journaux du serveur gardent une version tronquée (un bloc d'adresses, pas la tienne) pendant 14 jours.",
+    "Sauvegardes",
+    "Le serveur fait une copie nocturne de la base, gardée 7 jours. Une suppression de compte y disparaît à la fin de ce délai.",
+    "Qui d'autre voit des données ?",
+    "La page du jeu est hébergée par GitHub, et le trafic vers le serveur passe par un relais Tailscale. Le site n'utilise ni cookie ni traceur.",
+    "Tes droits",
+    "Tu peux supprimer ton compte toi-même (« Mon compte », avec confirmation) : tes résultats restent, anonymisés en « Joueur supprimé ». Pour accéder à tes données, les corriger ou t'opposer à leur traitement, ouvre une issue sur le dépôt GitHub du jeu, sans donnée personnelle dans le message : je te répondrai et, si besoin, je te demanderai un moyen de te joindre en privé."
+  ];
+  const page = readFileSync(join(ROOT, "confidentialite.html"), "utf8");
+  const pcsp = /http-equiv="Content-Security-Policy" content="([^"]+)"/.exec(page)[1];
+
+  test("CSP propre, stricte : rien que le dossier du site, ni réseau ni tiers ni en ligne", () => {
+    assert.equal(pcsp, "default-src 'none'; script-src https://lorenzoa93100.github.io/sudoku/; style-src https://lorenzoa93100.github.io/sudoku/; font-src https://lorenzoa93100.github.io/sudoku/fonts/; base-uri 'none'; form-action 'none'");
+    assert.ok(page.indexOf("Content-Security-Policy") < page.indexOf("<link") && page.indexOf("<link") < page.indexOf("<script"));
+    assert.ok(!/<script>|<style>|\son[a-z]+="|style="|<img|<iframe|https?:\/\/(?!lorenzoa93100\.github\.io)/.test(page.replace(/<meta http-equiv[^>]+>/, "")), "rien en ligne, rien de tiers");
+    const js = readFileSync(join(ROOT, "confidentialite.js"), "utf8").replace(/\/\*[\s\S]*?\*\//g, "");  // code seul, sans les commentaires
+    assert.ok(!/innerHTML|outerHTML|insertAdjacentHTML|document\.write|eval\(|Function\(|fetch\(|XMLHttpRequest|sendBeacon/.test(js));
+  });
+
+  test("le texte est reproduit tel quel, dans des éléments de texte", async () => {
+    const { page: p, ctx, watch } = await open("confidentialite.html");
+    const got = await p.$$eval("main.legal > h1, main.legal > h2, main.legal > p:not(.legalback)", els => els.map(e => e.textContent));
+    assert.deepEqual(got, EXPECTED);
+    assert.equal(await p.title(), "Confidentialité – Sudoku");
+    assert.equal(await p.evaluate(() => getComputedStyle(document.querySelector(".legal h1")).fontFamily.split(",")[0].replace(/"/g, "")), "Fraunces");
+    await p.click(".legalback a >> nth=0");
+    await p.waitForSelector(".menu.home");
+    await watch.check(); await ctx.close();
+  });
+
+  test("suit le thème choisi dans le jeu ; réglage illisible ignoré", async () => {
+    const a = await open("confidentialite.html", { init: 'localStorage.setItem("sdk-settings", JSON.stringify({ theme: "sakura" }))' });
+    assert.equal(await a.page.evaluate(() => document.documentElement.dataset.theme), "sakura");
+    await a.watch.check(); await a.ctx.close();
+    const b = await open("confidentialite.html", { init: 'localStorage.setItem("sdk-settings", "{pas du json")' });
+    assert.equal(await b.page.evaluate(() => document.documentElement.dataset.theme), undefined);
+    await b.watch.check(); await b.ctx.close();
+  });
+
+  test("liée depuis l'accueil, l'écran d'inscription et le pied de la salle", async () => {
+    const { page: p, ctx, watch } = await open();
+    await p.waitForSelector('#sheet a.homelegal[href="confidentialite.html"]');
+    await watch.check(); await ctx.close();
+    const { page: s, ctx: sctx } = await open("#tournoi");
+    const p2 = s;
+    await discordLogin(p2);
+    await p2.waitForSelector("#vSignup:not([hidden])");
+    assert.equal(await p2.getAttribute("#tSignupLegal a", "href"), "confidentialite.html");
+    assert.equal(await p2.getAttribute("#tSignupLegal a", "target"), "_blank");
+    assert.equal(await p2.getAttribute("#tSignupLegal a", "rel"), "noopener noreferrer");
+    await sctx.close();
+    const owner = fake.addUser("Owner");
+    const R = await open("#tournoi", { init: `localStorage.setItem(${JSON.stringify(TOKEN_KEY)}, ${JSON.stringify(owner.token)})` });
+    await R.page.click("#tGoCreate"); await R.page.click("#tCreateBtn");
+    await R.page.waitForSelector("#vRoom:not([hidden])");
+    assert.equal(await R.page.isVisible('#tRoomLegal a[href="confidentialite.html"]'), true);
+    await R.watch.check(); await R.ctx.close();
+  });
+});

@@ -1,0 +1,55 @@
+<!DOCTYPE html>
+<html lang="fr">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<title>Confidentialité – Sudoku</title>
+<!-- CSP stricte, propre à cette page : rien d'autre que le dossier du site (styles, polices, un
+     script qui n'applique que le thème), aucun appel réseau, aucune ressource tierce. -->
+<meta http-equiv="Content-Security-Policy" content="default-src 'none'; script-src https://lorenzoa93100.github.io/sudoku/; style-src https://lorenzoa93100.github.io/sudoku/; font-src https://lorenzoa93100.github.io/sudoku/fonts/; base-uri 'none'; form-action 'none'">
+<meta name="referrer" content="no-referrer">
+<link rel="stylesheet" href="app.css">
+<script src="confidentialite.js"></script>
+</head>
+<body class="legalpage">
+<main class="legal">
+  <p class="legalback"><a href="./">← Retour au jeu</a></p>
+  <h1>Confidentialité</h1>
+
+  <h2>Qui gère ce site ?</h2>
+  <p>Un projet personnel sans but commercial, géré par Lorenzoa93100. Contact : ouvre une « issue » sur le dépôt GitHub du jeu (Lorenzoa93100/sudoku), sans y mettre de donnée personnelle.</p>
+
+  <h2>Âge minimum</h2>
+  <p>Le mode tournoi passe par Discord, qui impose un âge minimum de 13 ans. Le jeu solo est ouvert à tous.</p>
+
+  <h2>Jouer sans compte</h2>
+  <p>Le jeu solo ne demande rien et n'envoie rien au serveur. Il garde dans ton navigateur ta partie en cours et tes réglages.</p>
+
+  <h2>Ce qu'un compte conserve</h2>
+  <p>Ton pseudo et ton avatar, un identifiant Discord haché (on ne garde ni ton nom Discord, ni ton adresse e-mail), la date de création et de dernière visite, tes résultats (temps, grilles résolues, victoires), et tes sessions (jeton haché, 90 jours, 5 appareils au plus). Un compte inactif depuis 12 mois est supprimé.</p>
+
+  <h2>Ce qui est public</h2>
+  <p>Ton pseudo, ton avatar, tes victoires et tes grilles résolues par niveau apparaissent dans le classement, visible sans compte.</p>
+
+  <h2>Les invités</h2>
+  <p>Un invité n'enregistre rien dans les classements. Son pseudo, son avatar et son jeton sont effacés une heure après la fin du tournoi.</p>
+
+  <h2>Connexion avec Discord</h2>
+  <p>Elle ne demande que le nom d'utilisateur, l'avatar et la bannière. Discord reçoit les informations de la connexion, selon sa propre politique de confidentialité.</p>
+
+  <h2>Adresses IP</h2>
+  <p>Elles ne sont jamais stockées dans la base de données. Les journaux du serveur gardent une version tronquée (un bloc d'adresses, pas la tienne) pendant 14 jours.</p>
+
+  <h2>Sauvegardes</h2>
+  <p>Le serveur fait une copie nocturne de la base, gardée 7 jours. Une suppression de compte y disparaît à la fin de ce délai.</p>
+
+  <h2>Qui d'autre voit des données ?</h2>
+  <p>La page du jeu est hébergée par GitHub, et le trafic vers le serveur passe par un relais Tailscale. Le site n'utilise ni cookie ni traceur.</p>
+
+  <h2>Tes droits</h2>
+  <p>Tu peux supprimer ton compte toi-même (« Mon compte », avec confirmation) : tes résultats restent, anonymisés en « Joueur supprimé ». Pour accéder à tes données, les corriger ou t'opposer à leur traitement, ouvre une issue sur le dépôt GitHub du jeu, sans donnée personnelle dans le message : je te répondrai et, si besoin, je te demanderai un moyen de te joindre en privé.</p>
+
+  <p class="legalback"><a href="./">← Retour au jeu</a></p>
+</main>
+</body>
+</html>

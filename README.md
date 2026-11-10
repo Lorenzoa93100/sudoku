@@ -37,6 +37,15 @@ Accès : **Nouvelle partie → Tournoi → Rejoindre**, **Nouvelle partie → Gr
 
 Le jeu solo et ses codes de grille sont inchangés (les tests le vérifient grille par grille).
 
+## Confidentialité
+
+`confidentialite.html` : ce que le jeu garde, combien de temps, ce qui est public, et comment
+exercer ses droits (issue sur ce dépôt). Liée depuis l'accueil, l'écran d'inscription et le
+pied de la salle d'un tournoi. Page statique avec sa propre CSP (`default-src 'none'`, styles,
+polices et un petit script `confidentialite.js` qui n'applique que le thème choisi, tous depuis
+`/sudoku/`), sans appel réseau ni ressource tierce. Toute évolution des durées de conservation
+côté serveur (`docs/donnees.md` du dépôt privé) doit s'y reporter.
+
 ## Sécurité
 
 - CSP stricte dans une balise `<meta>` : scripts, styles et polices uniquement depuis `/sudoku/`, aucun `unsafe-inline`, `connect-src` limité à l'API.

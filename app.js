@@ -898,6 +898,9 @@ function showHome(canContinue) {
   if (canContinue) buttons.push(homeButton("Continuer la partie", `${DIFFS[G.key].name} · ${fmt(G.time)}`, closeSheet));
   buttons.push(homeButton("Classement", "Les meilleurs joueurs des tournois", () => goTournoi("#tournoi-classement")));
   homeSheet("Sudoku", "Que veux-tu faire ?", buttons, null);
+  const legal = document.createElement("a");
+  legal.href = "confidentialite.html"; legal.className = "homelegal"; legal.textContent = "Confidentialité";
+  sheet.append(legal);
 }
 function showModeChoice(canContinue) {
   homeSheet("Nouvelle partie", "Seul ou entre amis ?", [

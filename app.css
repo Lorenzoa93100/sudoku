@@ -464,3 +464,14 @@ select.tinput{font-size:16px;padding:10px 12px}
 .tplayers .tkick{padding:4px 10px;font-size:13px}
 .tguestor{margin-top:18px}
 #tRoomGuestEnd{margin-top:8px}
+
+/* ---------- Page « Confidentialité » ---------- */
+body.legalpage{color:var(--text);font-family:"Figtree",system-ui,sans-serif}
+.legal{max-width:680px;margin:0 auto;padding:20px 16px 40px;line-height:1.55;font-size:16px}
+.legal h1{font-family:"Fraunces",Georgia,serif;font-weight:600;font-size:28px;margin:8px 0 18px}
+.legal h2{font-family:"Fraunces",Georgia,serif;font-weight:600;font-size:19px;margin:22px 0 6px}
+.legal p{margin:0 0 10px;overflow-wrap:anywhere}
+.legal a,.tlegal a{color:var(--pen)}
+.legalback{font-weight:600}
+.tlegal{color:var(--muted);font-size:13.5px;margin:14px 0 0}
+.homelegal{display:block;margin-top:12px;text-align:center;font-size:13.5px;color:var(--muted)}
