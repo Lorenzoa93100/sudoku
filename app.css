@@ -447,3 +447,8 @@ select.tinput{font-size:16px;padding:10px 12px}
 .tsolved{max-width:320px}
 .tsolved td:last-child,.tsolved th:last-child{text-align:right}
 .tsolvedline{margin-top:8px}
+
+/* ---------- Classement public (lot 4a) ---------- */
+.tpublic{margin:0 0 12px;font-weight:500}
+#tRankLogin{margin-top:10px}
+#tRankEmpty{margin:10px 0}

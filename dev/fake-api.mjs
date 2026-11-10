@@ -186,6 +186,8 @@ export function createFakeApi({ clock = () => Date.now(), maxWrong = 5 } = {}) {
       return json(201, { token: t, pseudo: body.pseudo, avatar: body.avatar });
     }
     if (req.path.startsWith("/v1/probe/")) return probe(req, route, body);
+    // Classement global public (lot 4a) : sans en-tête Authorization, top 10 sans « ma position ».
+    if (route === "GET /v1/leaderboard" && req.headers.authorization === undefined) return tournamentApi(req, body, null, clock(), strict);
     const [scheme, t] = (req.headers.authorization || "").split(" ");
     const uid = scheme === "Bearer" && RE_TOKEN.test(t || "") ? tokens.get(t) : undefined;
     if (!uid || users.get(uid).deleted) return json(401, { error: "unauthorized" }, { "www-authenticate": "Bearer" });
@@ -306,7 +308,11 @@ export function createFakeApi({ clock = () => Date.now(), maxWrong = 5 } = {}) {
     const route = `${req.method} ${req.path.replace(/\/\d+(\/|$)/, "/:id$1")}`;
     const tid = Number((/^\/v1\/tournaments\/(\d+)/.exec(req.path) || [])[1]);
     if (route === "GET /v1/leaderboard") {
-      if (fake.leaderboard) return json(200, fake.leaderboard(uid));
+      if (uid === null) {
+        fake.publicLeaderboardCalls = (fake.publicLeaderboardCalls || 0) + 1;
+        const d = fake.leaderboard ? fake.leaderboard(null) : null;
+        if (d) return json(200, { ...d, me: null, entries: d.entries.map(e => ({ ...e, me: false })) });
+      } else if (fake.leaderboard) return json(200, fake.leaderboard(uid));
       const wins = new Map();
       for (const t of tournaments.values()) {
         if (t.state !== "finished" || !t.winner_counted) continue;
@@ -317,6 +323,7 @@ export function createFakeApi({ clock = () => Date.now(), maxWrong = 5 } = {}) {
       const entries = order.slice(0, 10).map(([id, n], k) => { const u = users.get(id);
         return withSolved({ rank: k + 1, pseudo: u.pseudo, avatar: u.avatar, wins: n, deleted: u.deleted, me: id === uid }, id); });
       const k = order.findIndex(([id]) => id === uid);
+      if (uid === null) return json(200, { entries, players: order.length, me: null });
       return json(200, { entries, players: order.length, me: withSolved({ rank: k >= 0 ? k + 1 : null, wins: wins.get(uid) || 0 }, uid) });
     }
     if (route === "POST /v1/tournaments") {

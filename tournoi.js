@@ -704,15 +704,23 @@ function checkTList(d) {
   }
   return d;
 }
-function checkRanking(d) {
-  check(Array.isArray(d.entries) && d.entries.length <= 10 && isCount(d.players) && d.me
-    && maybeCount(d.me.rank) && isCount(d.me.wins));
-  d.me.solved = checkSolved(d.me.solved);
+// Classement global : public (lot 4a). Sans session, `me` est null et aucune ligne n'est la
+// mienne ; avec une session, `me` est obligatoire. `anonymous` : la requête est partie sans jeton.
+function checkRanking(d, anonymous) {
+  check(Array.isArray(d.entries) && d.entries.length <= 10 && isCount(d.players));
+  if (anonymous) check(d.me === null);
+  else {
+    check(d.me && maybeCount(d.me.rank) && isCount(d.me.wins));
+    d.me.solved = checkSolved(d.me.solved);
+  }
+  let ref = anonymous ? undefined : d.me.solved;
   for (const e of d.entries) {
     check(e && isCount(e.rank) && isCount(e.wins) && typeof e.deleted === "boolean" && typeof e.me === "boolean"
+      && (!anonymous || e.me === false)
       && (e.deleted ? e.pseudo === null && e.avatar === null : isText(e.pseudo, 40) && isText(e.avatar, 32)));
     e.solved = checkSolved(e.solved);
-    check((e.solved === null) === (d.me.solved === null));  // même version de serveur partout
+    if (ref === undefined) ref = e.solved;
+    check((e.solved === null) === (ref === null));  // même version de serveur partout
   }
   return d;
 }
@@ -971,9 +979,19 @@ $("tAbandon").addEventListener("click", () => {
 });
 
 /* Classement global */
+// Ouvert à tous : sans session, le classement public et une invitation à se connecter. Session
+// expirée : elle est oubliée et le classement public s'affiche quand même.
 async function openRanking() {
-  const d = checkRanking(await api("GET", "/v1/leaderboard"));
-  const withSolved = d.me.solved !== null;
+  let anonymous = !token, expired = false, d;
+  try {
+    d = checkRanking(await api("GET", "/v1/leaderboard"), anonymous);
+  } catch (err) {
+    if (anonymous || !(err instanceof ApiError) || err.kind !== "http" || err.status !== 401) throw err;
+    token = null; me = null; storage.del(TOKEN_KEY); $("tMe").hidden = true;
+    anonymous = expired = true;
+    d = checkRanking(await api("GET", "/v1/leaderboard"), true);
+  }
+  const withSolved = d.entries.length ? d.entries[0].solved !== null : !anonymous && d.me.solved !== null;
   $("tRankTable").classList.toggle("nolv", !withSolved);
   const rows = $("tRankRows"); rows.replaceChildren();
   for (const e of d.entries) {
@@ -984,15 +1002,26 @@ async function openRanking() {
     rows.append(tr);
   }
   $("tRankEmpty").hidden = d.entries.length > 0;
-  $("tRankMe").textContent = d.me.rank !== null
+  $("tRankBox").hidden = d.entries.length === 0;
+  $("tRankLogin").hidden = !anonymous;
+  if (anonymous) $("tRankMe").textContent = "Connecte-toi pour voir ta position.";
+  else $("tRankMe").textContent = d.me.rank !== null
     ? `Ta position : ${d.me.rank}ᵉ sur ${d.players} (${d.me.wins} victoire${d.me.wins > 1 ? "s" : ""}).`
     : "Tu n'as pas encore de victoire : gagne un tournoi pour entrer au classement.";
-  $("tRankMeSolved").hidden = !withSolved;
-  if (withSolved) $("tRankMeSolved").textContent = "Tes grilles résolues : " + LEVELS.map(l => `${DIFF_NAMES[l]} ${d.me.solved[l]}`).join(" · ") + ".";
-  show("vRanking"); say("");
+  const mine = !anonymous && d.me.solved !== null;
+  $("tRankMeSolved").hidden = !mine;
+  if (mine) $("tRankMeSolved").textContent = "Tes grilles résolues : " + LEVELS.map(l => `${DIFF_NAMES[l]} ${d.me.solved[l]}`).join(" · ") + ".";
+  show("vRanking");
+  say(expired ? "Ta session a expiré : reconnecte-toi pour voir ta position." : "", expired ? "err" : undefined);
 }
 $("tRankRefresh").addEventListener("click", () => run([$("tRankRefresh")], openRanking));
-$("tRankBack").addEventListener("click", () => run([$("tRankBack")], openLobby));
+$("tRankBack").addEventListener("click", () => {
+  if (token) { run([$("tRankBack")], openLobby); return; }
+  // Sans session : retour au jeu solo, comme la flèche du haut.
+  window.history.replaceState(null, "", location.pathname + location.search);
+  route();
+});
+$("tRankLogin").addEventListener("click", () => { keepIntent({ kind: "ranking" }); showLogin(); say(""); });
 
 /* ---------- Grille classée (lot 3) ---------- */
 // Une grille notée tirée par le serveur, qui mesure le temps et valide. Une seule partie active
@@ -1121,6 +1150,16 @@ function enter(intent = null) {
   if (window.top !== window.self) { show(null); say("Le mode tournoi ne s'ouvre pas dans un cadre. Ouvre la page directement.", "err"); return; }
   if (!API) { show(null); say(messageFor(new ApiError("config")), "err"); return; }
   if (loginPending) { const ret = loginPending; loginPending = null; finishLogin(ret); return; }
+  if (intent && intent.kind === "ranking") {
+    // Classement global public : ouvert directement, connecté ou non (une session expirée y est
+    // oubliée sans détour par l'écran de connexion). Connecté : pseudo du bandeau chargé ensuite.
+    show(null); say("Chargement…");
+    run([], async () => {
+      await openRanking();
+      if (token) { try { setMe(checkMe(await api("GET", "/v1/me"))); } catch (e) { /* bandeau seulement */ } }
+    });
+    return;
+  }
   if (!token) {
     if (intent) keepIntent(intent);  // reprise après la connexion Discord
     showLogin(); say(intent ? "Connecte-toi pour continuer." : ""); return;
@@ -1151,6 +1190,7 @@ function route() {
   const on = intent !== null || location.hash === "#tournoi";
   if (on && !active) enter(intent);
   else if (on && intent && token) runIntent(intent);
+  else if (on && intent && intent.kind === "ranking") run([], openRanking);
   else if (!on && active) leave();
 }
 $("tBack").addEventListener("click", e => {

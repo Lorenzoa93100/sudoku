@@ -72,6 +72,7 @@
   <div class="tview" id="vSignup" hidden>
     <h2 class="th2">Bienvenue !</h2>
     <p class="sub">Première connexion : choisis le pseudo et l'avatar que verront les autres joueurs. Ton nom Discord n'est jamais affiché.</p>
+    <p class="tstate tpublic" id="tSignupPublic">À savoir : ton pseudo et ton avatar sont publics. Ils apparaissent dans le classement global, visible par tous même sans connexion, et dans les tournois que tu rejoins.</p>
     <form id="tSignupForm" novalidate>
       <label class="tlabel" for="tPseudo">Pseudo</label>
       <input class="codein tinput" id="tPseudo" maxlength="20" autocomplete="nickname" autocapitalize="off" spellcheck="false" required>
@@ -217,14 +218,15 @@
   <div class="tview" id="vRanking" hidden>
     <div class="thead"><h2 class="th2">Classement</h2><button class="pill" type="button" id="tRankRefresh">Actualiser</button></div>
     <p class="sub">Trié par victoires (tournois et manches) ; à égalité, la plus ancienne dernière victoire passe devant. Colonnes suivantes : grilles résolues par niveau (grilles classées et tournois).</p>
-    <div class="tscroll">
+    <div class="tscroll" id="tRankBox">
     <table class="ttable" id="tRankTable">
       <thead><tr><th scope="col">Rang</th><th scope="col"><span class="sr">Avatar</span></th><th scope="col">Pseudo</th><th scope="col">Victoires</th><th scope="col" class="lv"><span aria-hidden="true">Fac.</span><span class="sr">Facile</span></th><th scope="col" class="lv"><span aria-hidden="true">Moy.</span><span class="sr">Moyen</span></th><th scope="col" class="lv"><span aria-hidden="true">Dif.</span><span class="sr">Difficile</span></th><th scope="col" class="lv"><span aria-hidden="true">Exp.</span><span class="sr">Expert</span></th><th scope="col" class="lv"><span aria-hidden="true">Ext.</span><span class="sr">Extrême</span></th></tr></thead>
       <tbody id="tRankRows"></tbody>
     </table>
     </div>
-    <p class="sub" id="tRankEmpty" hidden>Personne n'a encore de victoire.</p>
+    <p class="tstate" id="tRankEmpty" hidden>Aucun joueur classé pour l'instant.</p>
     <p class="tstate" id="tRankMe"></p>
+    <button class="pill primary" type="button" id="tRankLogin" hidden>Se connecter avec Discord</button>
     <p class="sub tsolvedline" id="tRankMeSolved" hidden></p>
     <div class="tactions"><button class="pill" type="button" id="tRankBack">Retour</button></div>
   </div>

@@ -878,14 +878,89 @@ describe("tournois créés par les joueurs", () => {
     await watch.check(); await ctx.close();
   });
 
-  test("classement sans être connecté : connexion d'abord, puis le classement", async () => {
-    fake.leaderboard = () => ({ players: 0, me: { rank: null, wins: 0 }, entries: [] });
+  test("classement public sans connexion : depuis l'accueil, sans jeton, « Connecte-toi pour voir ta position »", async () => {
+    const zoe = fake.addUser("Zoé", "lion");
+    fake.leaderboard = uid => ({ players: 1, me: uid ? { rank: null, wins: 0, solved: { facile: 0, moyen: 0, difficile: 0, expert: 0, extreme: 0 } } : null,
+      entries: [{ rank: 1, pseudo: "Zoé", avatar: "lion", wins: 3, deleted: false, me: uid === zoe.id,
+                  solved: { facile: 4, moyen: 0, difficile: 1, expert: 0, extreme: 0 } }] });
+    const { page, ctx, watch } = await open();
+    await page.click('.menu.home button:has-text("Classement")');
+    await page.waitForSelector("#vRanking:not([hidden])");
+    assert.equal(await page.isVisible("#vLogin"), false, "aucune connexion demandée");
+    assert.equal(fake.publicLeaderboardCalls, 1, "requête partie sans en-tête Authorization");
+    const rows = await page.$$eval("#tRankRows tr", trs => trs.map(tr => [...tr.children].map(td => td.textContent)));
+    assert.deepEqual(rows, [["1", "🦁", "Zoé", "3", "4", "0", "1", "0", "0"]]);
+    assert.equal(await page.textContent("#tRankMe"), "Connecte-toi pour voir ta position.");
+    assert.equal(await page.isVisible("#tRankMeSolved"), false);
+    assert.equal(await page.isVisible("#tRankLogin"), true);
+    assert.equal(await page.evaluate(k => localStorage.getItem(k), TOKEN_KEY), null);
+    assert.equal(await page.evaluate(() => location.hash), "#tournoi");
+    // Retour : le jeu solo (accueil), pas l'écran de connexion.
+    await page.click("#tRankBack");
+    await page.waitForSelector("#app:not([hidden])");
+    await page.waitForSelector(".menu.home");
+    // Menu ☰ du solo, toujours sans connexion.
+    await newGame(page);
+    await page.click("#menuBtn");
+    await page.click('#sheet a[href="#tournoi-classement"]');
+    await page.waitForSelector("#vRanking:not([hidden])");
+    assert.equal(fake.publicLeaderboardCalls, 2);
+    await watch.check(); await ctx.close();
+  });
+
+  test("classement vide : « Aucun joueur classé pour l'instant », tableau masqué", async () => {
+    const { page, ctx, watch } = await open("#tournoi-classement");
+    await page.waitForSelector("#vRanking:not([hidden])");
+    assert.equal(await page.textContent("#tRankEmpty"), "Aucun joueur classé pour l'instant.");
+    assert.equal(await page.isVisible("#tRankEmpty"), true);
+    assert.equal(await page.isVisible("#tRankTable"), false);
+    await watch.check(); await ctx.close();
+  });
+
+  test("« Se connecter » depuis le classement : connexion Discord puis retour au classement avec ma position", async () => {
     const { page, ctx } = await open("#tournoi-classement");
+    await page.waitForSelector("#vRanking:not([hidden])");
+    await page.click("#tRankLogin");
     await page.waitForSelector("#vLogin:not([hidden])");
-    assert.equal(fake.log.filter(r => r.path === "/v1/leaderboard").length, 0);
     await register(page);
     await page.waitForSelector("#vRanking:not([hidden])");
     await page.locator("#tRankMe").getByText("pas encore de victoire").waitFor();
+    assert.equal(await page.isVisible("#tRankLogin"), false);
+    await page.click("#tRankBack");
+    await page.waitForSelector("#vLobby:not([hidden])");
+    await ctx.close();
+  });
+
+  test("session expirée : jeton oublié, classement public affiché quand même", async () => {
+    const alice = fake.addUser("Alice");
+    fake.revokeTokens();
+    const { page, ctx } = await as(alice, "");
+    await page.click('.menu.home button:has-text("Classement")');
+    await page.waitForSelector("#vRanking:not([hidden])");
+    await msg(page).getByText("Ta session a expiré : reconnecte-toi pour voir ta position.").waitFor();
+    assert.equal(await page.textContent("#tRankMe"), "Connecte-toi pour voir ta position.");
+    assert.equal(await page.evaluate(k => localStorage.getItem(k), TOKEN_KEY), null);
+    await ctx.close();
+  });
+
+  test("réponse publique incohérente (une position, ou une ligne « à moi », sans session) : refusée", async () => {
+    for (const body of [{ entries: [], players: 0, me: { rank: 1, wins: 2 } },
+                        { entries: [{ rank: 1, pseudo: "Zoé", avatar: "lion", wins: 1, deleted: false, me: true,
+                                      solved: { facile: 0, moyen: 0, difficile: 0, expert: 0, extreme: 0 } }], players: 1, me: null }]) {
+      fake.queue({ status: 200, body });
+      const { page, ctx } = await open("#tournoi-classement");
+      await msg(page).getByText("Réponse inattendue du serveur").waitFor();
+      assert.equal(await page.isVisible("#vRanking"), false);
+      await ctx.close();
+    }
+  });
+
+  test("inscription : pseudo et avatar annoncés publics", async () => {
+    const { page, ctx } = await open("#tournoi");
+    await discordLogin(page);
+    await page.waitForSelector("#vSignup:not([hidden])");
+    assert.match(await page.textContent("#tSignupPublic"), /ton pseudo et ton avatar sont publics/);
+    assert.equal(await page.isVisible("#tSignupPublic"), true);
     await ctx.close();
   });
 
